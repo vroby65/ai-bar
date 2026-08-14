@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -u
 
-APP_DIR="/home/user/sviluppo/Esperimenti/ds-bar"
-CONFIG_DIR="${XDG_CONFIG_HOME:-"$HOME/.config"}/ds-bar"
-CONFIG_FILE="${DS_BAR_CONFIG:-"$CONFIG_DIR/config.json"}"
+APP_DIR="/home/user/sviluppo/AI/AI-bar"
+CONFIG_DIR="${XDG_CONFIG_HOME:-"$HOME/.config"}/ai-bar"
+CONFIG_FILE="${AI_BAR_CONFIG:-"$CONFIG_DIR/config.json"}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 OPENBOX_SESSION="${OPENBOX_SESSION:-/usr/bin/openbox-session}"
 
@@ -12,17 +12,17 @@ if [ ! -f "$CONFIG_FILE" ] && [ -r "$APP_DIR/config.example.json" ]; then
     cp "$APP_DIR/config.example.json" "$CONFIG_FILE"
 fi
 
-export DESKTOP_SESSION="ds-bar-openbox"
+export DESKTOP_SESSION="ai-bar-openbox"
 export XDG_CURRENT_DESKTOP="Openbox"
-export XDG_SESSION_DESKTOP="ds-bar-openbox"
+export XDG_SESSION_DESKTOP="ai-bar-openbox"
 
 "$OPENBOX_SESSION" &
 openbox_pid=$!
 
-sleep "${DS_BAR_START_DELAY:-1}"
+sleep "${AI_BAR_START_DELAY:-1}"
 (
     cd "$APP_DIR" || exit 1
-    exec "$PYTHON_BIN" -m ds_bar --config "$CONFIG_FILE"
+    exec "$PYTHON_BIN" -m ai_bar --config "$CONFIG_FILE"
 ) &
 bar_pid=$!
 

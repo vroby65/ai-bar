@@ -21,13 +21,7 @@
         "type": "volume",
         "label": "Volume",
         "icon": "audio-volume-high-symbolic",
-        "command": ["pavucontrol"]
-      },
-      {
-        "type": "wifi",
-        "label": "Wi-Fi",
-        "icon": "network-wireless-symbolic",
-        "command": ["nm-connection-editor"]
+        "command": ["pavucontrol", "-t", "2"]
       },
       {
         "type": "command",
@@ -96,7 +90,7 @@
     }
   ],
   "terminal": {
-    "command": null,
+    "command": ["hermes"],
     "working_directory": null,
     "font": "Monospace 10",
     "scrollback_lines": 10000

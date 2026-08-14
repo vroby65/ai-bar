@@ -34,13 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "type": "volume",
                 "label": "Volume",
                 "icon": "audio-volume-high-symbolic",
-                "command": ["pavucontrol"],
-            },
-            {
-                "type": "wifi",
-                "label": "Wi-Fi",
-                "icon": "network-wireless-symbolic",
-                "command": ["nm-connection-editor"],
+                "command": ["pavucontrol", "-t", "2"],
             },
             {
                 "type": "command",
@@ -109,7 +103,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     ],
     "terminal": {
-        "command": None,
+        "command": ["hermes"],
         "working_directory": None,
         "font": "Monospace 10",
         "scrollback_lines": 10000,
@@ -146,8 +140,8 @@ def default_config() -> dict[str, Any]:
 def default_config_path() -> Path:
     config_home = os.environ.get("XDG_CONFIG_HOME")
     if config_home:
-        return Path(config_home) / "ds-bar" / "config.json"
-    return Path.home() / ".config" / "ds-bar" / "config.json"
+        return Path(config_home) / "ai-bar" / "config.json"
+    return Path.home() / ".config" / "ai-bar" / "config.json"
 
 
 def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:

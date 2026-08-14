@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ds_bar.config import ConfigError, default_config, load_config, merge_config
+from ai_bar.config import ConfigError, default_config, load_config, merge_config
 
 
 class ConfigTests(unittest.TestCase):
@@ -19,6 +19,9 @@ class ConfigTests(unittest.TestCase):
             ["Codex", "DS Code", "Hermes", "Picoclaw"],
         )
         self.assertTrue(all(button["target"] == "terminal" for button in config["launcher_groups"][1]["buttons"]))
+        self.assertEqual(config["terminal"]["command"], ["hermes"])
+        self.assertEqual([item["type"] for item in config["tray"]["items"]], ["volume", "command"])
+        self.assertEqual(config["tray"]["items"][0]["command"], ["pavucontrol", "-t", "2"])
         self.assertEqual(
             [button["label"] for button in config["session_buttons"]],
             ["Reload", "Logout", "Reboot", "Powerdown"],

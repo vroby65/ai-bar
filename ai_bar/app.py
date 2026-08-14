@@ -1,0 +1,1209 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkX11", "3.0")
+gi.require_version("Vte", "2.91")
+
+from gi.repository import Gdk, GdkX11, GLib, Gtk, Pango, Vte
+
+try:
+    gi.require_version("Wnck", "3.0")
+    from gi.repository import Wnck
+except Exception:  # pragma: no cover - exercised only on systems without Wnck.
+    Wnck = None
+
+try:
+    from Xlib import X, XK, display as xlib_display
+except Exception:  # pragma: no cover - exercised only on systems without python-xlib.
+    X = None
+    XK = None
+    xlib_display = None
+
+from .config import ConfigError, default_config, load_config
+from .xapp_tray import XAppStatusIconHost
+from .xembed_tray import XEmbedTrayHost
+
+
+CLOCK_VERTICAL_SPACING = 2
+CLOCK_HORIZONTAL_SPACING = 8
+WINDOW_LIST_REFRESH_SECONDS = 2
+PANEL_ANIMATION_INTERVAL_MS = 16
+PANEL_ANIMATION_MIN_STEP = 18
+VOLUME_UPDATE_DELAY_MS = 120
+
+
+def clock_labels_fit_inline(available_width: int, time_width: int, date_width: int, spacing: int) -> bool:
+    return time_width + date_width + spacing <= available_width
+
+
+def panel_x_for_state(side: str, screen_x: int, screen_width: int, panel_width: int, hidden: bool) -> int:
+    if side == "right":
+        return screen_x + screen_width if hidden else screen_x + screen_width - panel_width
+    return screen_x - panel_width if hidden else screen_x
+
+
+def clean_window_title(title: str) -> str:
+    return " ".join(title.split()) or "Finestra"
+
+
+def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
+    for window in windows:
+        if int(window.get_xid()) == xid:
+            return window
+    return None
+
+
+@dataclass(frozen=True)
+class WindowInfo:
+    xid: int
+    title: str
+    active: bool
+
+
+@dataclass(frozen=True)
+class VolumeState:
+    percent: int
+    muted: bool
+
+
+class X11SuperToggle:
+    def __init__(self, callback: Callable[[], None]) -> None:
+        self.callback = callback
+        self.display: Any = None
+        self.root: Any = None
+        self.keycodes: set[int] = set()
+        self.poll_id: int | None = None
+
+    def start(self) -> bool:
+        if X is None or XK is None or xlib_display is None:
+            print("ai-bar: python-xlib non disponibile, toggle Super disattivato.", file=sys.stderr)
+            return False
+
+        try:
+            self.display = xlib_display.Display()
+            self.root = self.display.screen().root
+            for key_name in ("Super_L", "Super_R"):
+                keycode = self.display.keysym_to_keycode(XK.string_to_keysym(key_name))
+                if keycode:
+                    self.root.grab_key(keycode, X.AnyModifier, True, X.GrabModeAsync, X.GrabModeAsync)
+                    self.keycodes.add(int(keycode))
+
+            self.display.sync()
+            if not self.keycodes:
+                return False
+            self.poll_id = GLib.timeout_add(50, self._poll_events)
+            return True
+        except Exception as exc:
+            print(f"ai-bar: toggle Super disattivato: {exc}", file=sys.stderr)
+            self.stop()
+            return False
+
+    def stop(self) -> None:
+        if self.poll_id is not None:
+            GLib.source_remove(self.poll_id)
+            self.poll_id = None
+
+        if self.display is not None and self.root is not None:
+            for keycode in self.keycodes:
+                try:
+                    self.root.ungrab_key(keycode, X.AnyModifier)
+                except Exception:
+                    pass
+            try:
+                self.display.flush()
+            except Exception:
+                pass
+
+        self.keycodes.clear()
+
+    def _poll_events(self) -> bool:
+        if self.display is None:
+            return False
+
+        while self.display.pending_events():
+            event = self.display.next_event()
+            if event.type == X.KeyPress and int(event.detail) in self.keycodes:
+                self.callback()
+        return True
+
+
+CSS = """
+#ai-bar {
+  background: #151819;
+  color: #f2f2ee;
+}
+
+.clock-time {
+  font-size: 30px;
+  font-weight: 700;
+}
+
+.clock-date {
+  color: #aeb8bd;
+  font-size: 13px;
+}
+
+.section-title {
+  color: #9ea7ac;
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+button.status-button,
+button.window-button,
+button.launcher-button,
+button.session-button {
+  background: #242829;
+  border: 1px solid #303638;
+  border-radius: 6px;
+  color: #f2f2ee;
+  padding: 6px;
+}
+
+button.status-button:hover,
+button.window-button:hover,
+button.launcher-button:hover,
+button.session-button:hover {
+  background: #2d3335;
+  border-color: #4c8f72;
+}
+
+button.window-button.active-window {
+  background: #314238;
+  border-color: #63b68e;
+}
+
+button.window-button {
+  min-height: 30px;
+  padding: 4px 7px;
+}
+
+button.status-button {
+  min-height: 30px;
+  padding: 4px 7px;
+}
+
+.volume-control {
+  background: #242829;
+  border: 1px solid #303638;
+  border-radius: 6px;
+  padding: 3px 5px;
+}
+
+button.volume-mute-button,
+button.volume-settings-button {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 3px;
+}
+
+button.volume-mute-button:hover,
+button.volume-settings-button:hover {
+  background: #2d3335;
+}
+
+scale.volume-slider {
+  min-width: 100px;
+}
+
+.volume-percent {
+  min-width: 38px;
+}
+
+button.launcher-button {
+  min-height: 60px;
+}
+
+.status-area {
+  margin-bottom: 2px;
+}
+
+.status-flow {
+  margin-bottom: 0;
+}
+
+.window-flow {
+  margin-top: 2px;
+}
+
+.tray-icon-cell {
+  background-color: #242829;
+  border: 1px solid #303638;
+  border-radius: 6px;
+  min-height: 30px;
+  min-width: 30px;
+  padding: 3px;
+}
+
+.terminal-wrap {
+  border-top: 1px solid #303638;
+  margin-top: 2px;
+}
+
+.resize-handle {
+  background: #252a2c;
+  min-width: 6px;
+}
+
+.resize-handle:hover {
+  background: #4c8f72;
+}
+
+.session-row {
+  border-top: 1px solid #303638;
+  padding-top: 8px;
+}
+"""
+
+
+class AiBarWindow(Gtk.Window):
+    def __init__(self, config: dict[str, Any], config_path: Path | None = None) -> None:
+        super().__init__(title="ai-bar")
+        self.config = config
+        self.config_path = config_path
+        self.tray_host: XEmbedTrayHost | None = None
+        self.xapp_tray_host: XAppStatusIconHost | None = None
+        self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
+        self.volume_controls: list[tuple[Gtk.Scale, Gtk.Label, Gtk.Image]] = []
+        self.volume_percent = 0
+        self.volume_muted = False
+        self.volume_should_unmute = False
+        self.volume_update_timeout_id: int | None = None
+        self.terminal: Vte.Terminal | None = None
+        self.terminal_wrap: Gtk.Box | None = None
+        self.wnck_screen: Any = None
+        self.window_flow: Gtk.FlowBox | None = None
+        self.window_children: list[Gtk.FlowBoxChild] = []
+        self.window_list_signature: tuple[tuple[int, str, bool], ...] = ()
+        self.window_list_poll_id: int | None = None
+        self.own_xid: int | None = None
+        self.super_toggle: X11SuperToggle | None = None
+        self.panel_width = int(self.config["panel"]["width"])
+        self.panel_hidden = False
+        self.panel_animation_id: int | None = None
+        self.panel_geometry_applied = False
+        self.resize_drag: tuple[int, float] | None = None
+
+        panel = self.config["panel"]
+        self.set_name("ai-bar")
+        self.set_decorated(bool(panel.get("decorated", False)))
+        self.set_keep_above(bool(panel.get("keep_above", True)))
+        self.set_skip_taskbar_hint(True)
+        self.set_type_hint(Gdk.WindowTypeHint.DOCK)
+        self.set_accept_focus(True)
+        self.set_focus_on_map(True)
+        self.set_resizable(bool(panel.get("resizable", True)))
+        self.connect("destroy", self._on_destroy)
+        self.connect("realize", self._on_realize)
+        self.connect("configure-event", self._on_configure)
+        self.connect("key-press-event", self._on_key_press)
+
+        self._install_css()
+        self.add(self._build_content())
+        self.show_all()
+
+    def _build_content(self) -> Gtk.Widget:
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.set_border_width(10)
+
+        content.pack_start(self._build_clock(), False, False, 0)
+        content.pack_start(self._build_tray_row(), False, False, 0)
+
+        for group in self.config.get("launcher_groups", []):
+            content.pack_start(self._build_launcher_group(group), False, False, 0)
+
+        self.terminal_wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.terminal_wrap.get_style_context().add_class("terminal-wrap")
+        self.terminal_wrap.pack_start(self._build_terminal(), True, True, 8)
+        content.pack_start(self.terminal_wrap, True, True, 0)
+        content.pack_start(self._build_session_buttons(), False, False, 0)
+
+        resizable = bool(self.config["panel"].get("resizable", True))
+        if resizable and self.config["panel"].get("side", "left") == "right":
+            root.pack_start(self._build_resize_handle(), False, False, 0)
+
+        root.pack_start(content, True, True, 0)
+
+        if resizable and self.config["panel"].get("side", "left") == "left":
+            root.pack_start(self._build_resize_handle(), False, False, 0)
+
+        return root
+
+    def _build_clock(self) -> Gtk.Widget:
+        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.clock_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
+        self.time_label = Gtk.Label()
+        self.date_label = Gtk.Label()
+        self.time_label.get_style_context().add_class("clock-time")
+        self.date_label.get_style_context().add_class("clock-date")
+        self.time_label.set_xalign(0.5)
+        self.date_label.set_xalign(0.5)
+        self.clock_box.pack_start(self.time_label, False, False, 0)
+        self.clock_box.pack_start(self.date_label, False, False, 0)
+        wrapper.pack_start(self.clock_box, False, False, 0)
+        wrapper.connect("size-allocate", self._on_clock_size_allocate)
+
+        self._update_clock()
+        GLib.timeout_add_seconds(1, self._update_clock)
+        return wrapper
+
+    def _build_tray_row(self) -> Gtk.Widget:
+        status_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        status_area.get_style_context().add_class("status-area")
+
+        status_flow = Gtk.FlowBox()
+        status_flow.get_style_context().add_class("status-flow")
+        status_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        status_flow.set_min_children_per_line(1)
+        status_flow.set_max_children_per_line(20)
+        status_flow.set_column_spacing(6)
+        status_flow.set_row_spacing(6)
+        status_flow.set_direction(Gtk.TextDirection.RTL)
+
+        for item in self.config.get("tray", {}).get("items", []):
+            self._add_flow_child(status_flow, self._build_status_button(item))
+
+        tray_flow = Gtk.FlowBox()
+        tray_flow.get_style_context().add_class("status-flow")
+        tray_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        tray_flow.set_min_children_per_line(1)
+        tray_flow.set_max_children_per_line(20)
+        tray_flow.set_column_spacing(6)
+        tray_flow.set_row_spacing(6)
+        tray_flow.set_direction(Gtk.TextDirection.RTL)
+
+        icon_size = int(self.config.get("tray", {}).get("icon_size", 24))
+        self.xapp_tray_host = XAppStatusIconHost(
+            tray_flow,
+            icon_size,
+            str(self.config["panel"].get("side", "left")),
+        )
+        if self.config.get("tray", {}).get("xembed", True):
+            self.tray_host = XEmbedTrayHost(tray_flow, icon_size)
+
+        self.window_flow = Gtk.FlowBox()
+        self.window_flow.get_style_context().add_class("window-flow")
+        self.window_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.window_flow.set_min_children_per_line(1)
+        self.window_flow.set_max_children_per_line(3)
+        self.window_flow.set_column_spacing(6)
+        self.window_flow.set_row_spacing(6)
+
+        refresh = int(self.config.get("tray", {}).get("status_refresh_seconds", 5))
+        if self.status_labels or self.volume_controls:
+            self._update_status_items()
+            GLib.timeout_add_seconds(max(1, refresh), self._update_status_items)
+
+        status_area.pack_start(status_flow, False, False, 0)
+        status_area.pack_start(tray_flow, False, False, 0)
+        status_area.pack_start(self.window_flow, False, False, 0)
+        return status_area
+
+    def _add_flow_child(self, flow: Gtk.FlowBox, widget: Gtk.Widget) -> Gtk.FlowBoxChild:
+        widget.set_direction(Gtk.TextDirection.LTR)
+        child = Gtk.FlowBoxChild()
+        child.add(widget)
+        flow.insert(child, -1)
+        return child
+
+    def _build_status_button(self, item: dict[str, Any]) -> Gtk.Widget:
+        if item.get("type") == "volume":
+            return self._build_volume_control(item)
+
+        button = Gtk.Button()
+        button.get_style_context().add_class("status-button")
+        button.set_tooltip_text(str(item.get("label", "")))
+        button.set_relief(Gtk.ReliefStyle.NONE)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        icon_name = item.get("icon")
+        if icon_name:
+            image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.BUTTON)
+            inner.pack_start(image, False, False, 0)
+
+        label = Gtk.Label(label=str(item.get("label", "")))
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_max_width_chars(14)
+        inner.pack_start(label, False, False, 0)
+        button.add(inner)
+
+        command = item.get("command")
+        if command:
+            button.connect("clicked", lambda _button: self._launch(command))
+
+        if item.get("type") == "wifi":
+            self.status_labels.append((item, label))
+
+        return button
+
+    def _build_volume_control(self, item: dict[str, Any]) -> Gtk.Widget:
+        control = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        control.get_style_context().add_class("volume-control")
+        control.set_hexpand(True)
+
+        mute_button = Gtk.Button()
+        mute_button.get_style_context().add_class("volume-mute-button")
+        mute_button.set_relief(Gtk.ReliefStyle.NONE)
+        mute_button.set_tooltip_text("Attiva o disattiva l'audio")
+        mute_button.connect("clicked", self._on_volume_mute_clicked)
+        icon = Gtk.Image.new_from_icon_name("audio-volume-muted-symbolic", Gtk.IconSize.BUTTON)
+        mute_button.add(icon)
+        control.pack_start(mute_button, False, False, 0)
+
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        scale.get_style_context().add_class("volume-slider")
+        scale.set_draw_value(False)
+        scale.set_hexpand(True)
+        scale.set_tooltip_text("Volume")
+        scale.connect("value-changed", self._on_volume_value_changed)
+        control.pack_start(scale, True, True, 0)
+
+        label = Gtk.Label(label="—")
+        label.get_style_context().add_class("volume-percent")
+        label.set_xalign(1)
+        control.pack_start(label, False, False, 0)
+
+        command = item.get("command")
+        if command:
+            settings_button = Gtk.Button()
+            settings_button.get_style_context().add_class("volume-settings-button")
+            settings_button.set_relief(Gtk.ReliefStyle.NONE)
+            settings_button.set_tooltip_text("Impostazioni audio")
+            settings_button.add(
+                Gtk.Image.new_from_icon_name("preferences-system-symbolic", Gtk.IconSize.MENU)
+            )
+            settings_button.connect("clicked", lambda _button: self._launch(command))
+            control.pack_start(settings_button, False, False, 0)
+
+        self.volume_controls.append((scale, label, icon))
+        return control
+
+    def _build_window_button(self, info: WindowInfo) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("window-button")
+        if info.active:
+            button.get_style_context().add_class("active-window")
+        button.set_tooltip_text(info.title)
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.connect("clicked", lambda _button: self._activate_window(info.xid))
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        image = Gtk.Image.new_from_icon_name("window-symbolic", Gtk.IconSize.MENU)
+        inner.pack_start(image, False, False, 0)
+
+        label = Gtk.Label(label=info.title)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_max_width_chars(16)
+        inner.pack_start(label, False, False, 0)
+        button.add(inner)
+        return button
+
+    def _build_launcher_group(self, group: dict[str, Any]) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        title = group.get("title")
+        if title:
+            label = Gtk.Label(label=str(title))
+            label.set_xalign(0)
+            label.get_style_context().add_class("section-title")
+            box.pack_start(label, False, False, 0)
+
+        columns = max(1, int(group.get("columns", 1)))
+        grid = Gtk.Grid(column_spacing=6, row_spacing=6)
+        grid.set_column_homogeneous(True)
+
+        for index, button_config in enumerate(group.get("buttons", [])):
+            button = self._build_launcher_button(button_config)
+            grid.attach(button, index % columns, index // columns, 1, 1)
+
+        box.pack_start(grid, False, False, 0)
+        return box
+
+    def _build_launcher_button(self, button_config: dict[str, Any]) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("launcher-button")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text(str(button_config.get("label", "")))
+        if button_config.get("target") == "terminal":
+            button.connect("clicked", lambda _button: self._restart_terminal(button_config["command"]))
+        else:
+            button.connect("clicked", lambda _button: self._launch(button_config["command"]))
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        inner.set_halign(Gtk.Align.CENTER)
+        inner.set_valign(Gtk.Align.CENTER)
+
+        icon_name = button_config.get("icon")
+        if icon_name:
+            image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.DIALOG)
+            image.set_pixel_size(24)
+            inner.pack_start(image, False, False, 0)
+
+        label = Gtk.Label(label=str(button_config.get("label", "")))
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_max_width_chars(10)
+        label.set_justify(Gtk.Justification.CENTER)
+        inner.pack_start(label, False, False, 0)
+
+        button.add(inner)
+        return button
+
+    def _build_session_buttons(self) -> Gtk.Widget:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        row.get_style_context().add_class("session-row")
+        row.set_homogeneous(True)
+
+        for button_config in self.config.get("session_buttons", []):
+            row.pack_start(self._build_session_button(button_config), True, True, 0)
+
+        return row
+
+    def _build_session_button(self, button_config: dict[str, Any]) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("session-button")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text(str(button_config.get("label", "")))
+        if button_config.get("action") == "reload":
+            button.connect("clicked", lambda _button: self._reload())
+        else:
+            button.connect("clicked", lambda _button: self._launch(button_config["command"]))
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        inner.set_halign(Gtk.Align.CENTER)
+        inner.set_valign(Gtk.Align.CENTER)
+
+        icon_name = button_config.get("icon")
+        if icon_name:
+            image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.BUTTON)
+            inner.pack_start(image, False, False, 0)
+
+        label = Gtk.Label(label=str(button_config.get("label", "")))
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_max_width_chars(9)
+        inner.pack_start(label, False, False, 0)
+
+        button.add(inner)
+        return button
+
+    def _build_terminal(self, command: str | list[str] | None = None) -> Gtk.Widget:
+        terminal_config = self.config.get("terminal", {})
+        terminal = Vte.Terminal()
+        self.terminal = terminal
+        terminal.set_can_focus(True)
+        terminal.set_hexpand(True)
+        terminal.set_vexpand(True)
+        terminal.set_scrollback_lines(int(terminal_config.get("scrollback_lines", 10000)))
+        terminal.connect("button-press-event", self._on_terminal_button_press)
+
+        font = terminal_config.get("font")
+        if font:
+            terminal.set_font(Pango.FontDescription(str(font)))
+
+        argv = terminal_argv(command if command is not None else terminal_config.get("command"))
+        cwd = terminal_config.get("working_directory") or os.environ.get("HOME")
+        terminal.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            str(cwd) if cwd else None,
+            argv,
+            None,
+            GLib.SpawnFlags.DEFAULT,
+            None,
+            None,
+            -1,
+            None,
+            None,
+            None,
+        )
+        return terminal
+
+    def _build_resize_handle(self) -> Gtk.Widget:
+        handle = Gtk.EventBox()
+        handle.get_style_context().add_class("resize-handle")
+        handle.set_size_request(6, -1)
+        handle.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+            | Gdk.EventMask.POINTER_MOTION_MASK
+        )
+        handle.connect("realize", self._on_resize_handle_realize)
+        handle.connect("button-press-event", self._on_resize_press)
+        handle.connect("button-release-event", self._on_resize_release)
+        handle.connect("motion-notify-event", self._on_resize_motion)
+        return handle
+
+    def _on_realize(self, _window: Gtk.Window) -> None:
+        gdk_window = self.get_window()
+        if gdk_window is not None:
+            self.own_xid = GdkX11.X11Window.get_xid(gdk_window)
+        self._apply_panel_geometry()
+        self.panel_geometry_applied = True
+        self._apply_strut()
+        self._start_window_list()
+        self.super_toggle = X11SuperToggle(self._toggle_panel_visibility)
+        self.super_toggle.start()
+        GLib.idle_add(self._focus_terminal)
+        if self.xapp_tray_host is not None:
+            self.xapp_tray_host.start()
+        if self.tray_host is not None:
+            self.tray_host.start()
+
+    def _on_configure(self, _window: Gtk.Window, event: Gdk.EventConfigure) -> bool:
+        if self.panel_geometry_applied and event.width != self.panel_width:
+            self.panel_width = max(120, int(event.width))
+            self._apply_strut()
+        return False
+
+    def _on_destroy(self, _window: Gtk.Window) -> None:
+        if self.volume_update_timeout_id is not None:
+            GLib.source_remove(self.volume_update_timeout_id)
+            self.volume_update_timeout_id = None
+        if self.panel_animation_id is not None:
+            GLib.source_remove(self.panel_animation_id)
+            self.panel_animation_id = None
+        if self.window_list_poll_id is not None:
+            GLib.source_remove(self.window_list_poll_id)
+            self.window_list_poll_id = None
+        if self.super_toggle is not None:
+            self.super_toggle.stop()
+        if self.xapp_tray_host is not None:
+            self.xapp_tray_host.stop()
+        if self.tray_host is not None:
+            self.tray_host.stop()
+        Gtk.main_quit()
+
+    def _on_key_press(self, _window: Gtk.Window, event: Gdk.EventKey) -> bool:
+        ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
+        if ctrl and event.keyval == Gdk.KEY_q:
+            self.destroy()
+            return True
+        return False
+
+    def _on_terminal_button_press(self, terminal: Vte.Terminal, event: Gdk.EventButton) -> bool:
+        self.present_with_time(event.time)
+        terminal.grab_focus()
+        return False
+
+    def _focus_terminal(self) -> bool:
+        if self.terminal is not None:
+            self.terminal.grab_focus()
+        return False
+
+    def _on_resize_handle_realize(self, handle: Gtk.Widget) -> None:
+        gdk_window = handle.get_window()
+        display = Gdk.Display.get_default()
+        if gdk_window is not None and display is not None:
+            cursor = Gdk.Cursor.new_from_name(display, "ew-resize")
+            if cursor is not None:
+                gdk_window.set_cursor(cursor)
+
+    def _on_resize_press(self, _handle: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button != 1:
+            return False
+        self.resize_drag = (self.panel_width, event.x_root)
+        return True
+
+    def _on_resize_release(self, _handle: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button == 1:
+            self.resize_drag = None
+        return True
+
+    def _on_resize_motion(self, _handle: Gtk.Widget, event: Gdk.EventMotion) -> bool:
+        if self.resize_drag is None:
+            return False
+
+        start_width, start_x = self.resize_drag
+        delta = event.x_root - start_x
+        if self.config["panel"].get("side", "left") == "right":
+            delta = -delta
+
+        self._set_panel_width(start_width + int(delta))
+        return True
+
+    def _update_clock(self) -> bool:
+        now = datetime.now()
+        clock = self.config.get("clock", {})
+        self.time_label.set_text(now.strftime(str(clock.get("time_format", "%H:%M:%S"))))
+        self.date_label.set_text(now.strftime(str(clock.get("date_format", "%A %d %B %Y"))))
+        self.clock_box.queue_resize()
+        return True
+
+    def _on_clock_size_allocate(self, _box: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
+        _time_min_width, time_width = self.time_label.get_preferred_width()
+        _date_min_width, date_width = self.date_label.get_preferred_width()
+        inline = clock_labels_fit_inline(
+            allocation.width,
+            time_width,
+            date_width,
+            CLOCK_HORIZONTAL_SPACING,
+        )
+
+        self.clock_box.set_orientation(Gtk.Orientation.HORIZONTAL if inline else Gtk.Orientation.VERTICAL)
+        self.clock_box.set_spacing(CLOCK_HORIZONTAL_SPACING if inline else CLOCK_VERTICAL_SPACING)
+        self.clock_box.set_halign(Gtk.Align.CENTER if inline else Gtk.Align.FILL)
+
+    def _update_status_items(self) -> bool:
+        for item, label in self.status_labels:
+            item_type = item.get("type")
+            if item_type == "wifi":
+                label.set_text(read_wifi_status())
+
+        if self.volume_controls:
+            state = read_volume_state()
+            if state is None:
+                for _scale, label, icon in self.volume_controls:
+                    label.set_text("—")
+                    icon.set_from_icon_name("audio-volume-muted-symbolic", Gtk.IconSize.BUTTON)
+            else:
+                self._show_volume_state(state, update_scale=True)
+        return True
+
+    def _show_volume_state(self, state: VolumeState, update_scale: bool) -> None:
+        self.volume_percent = state.percent
+        self.volume_muted = state.muted
+        icon_name = volume_icon_name(state.percent, state.muted)
+        text = "Mute" if state.muted else f"{state.percent}%"
+
+        for scale, label, icon in self.volume_controls:
+            if update_scale:
+                scale.handler_block_by_func(self._on_volume_value_changed)
+                scale.set_value(min(state.percent, 100))
+                scale.handler_unblock_by_func(self._on_volume_value_changed)
+            label.set_text(text)
+            icon.set_from_icon_name(icon_name, Gtk.IconSize.BUTTON)
+
+    def _on_volume_value_changed(self, scale: Gtk.Scale) -> None:
+        percent = round(scale.get_value())
+        self.volume_should_unmute = self.volume_should_unmute or self.volume_muted
+        self._show_volume_state(VolumeState(percent=percent, muted=False), update_scale=False)
+
+        if self.volume_update_timeout_id is not None:
+            GLib.source_remove(self.volume_update_timeout_id)
+        self.volume_update_timeout_id = GLib.timeout_add(
+            VOLUME_UPDATE_DELAY_MS,
+            self._apply_volume_change,
+            percent,
+        )
+
+    def _apply_volume_change(self, percent: int) -> bool:
+        self.volume_update_timeout_id = None
+        set_system_volume(percent)
+        if self.volume_should_unmute:
+            set_system_muted(False)
+            self.volume_should_unmute = False
+        return False
+
+    def _on_volume_mute_clicked(self, _button: Gtk.Button) -> None:
+        muted = not self.volume_muted
+        if set_system_muted(muted):
+            self._show_volume_state(
+                VolumeState(percent=self.volume_percent, muted=muted),
+                update_scale=False,
+            )
+
+    def _start_window_list(self) -> None:
+        if self.window_flow is None:
+            return
+
+        if Wnck is None:
+            print("ai-bar: libwnck non disponibile, elenco finestre disattivato.", file=sys.stderr)
+            return
+
+        try:
+            Wnck.set_client_type(Wnck.ClientType.PAGER)
+            self.wnck_screen = Wnck.Screen.get_default()
+            if self.wnck_screen is None:
+                return
+        except Exception as exc:
+            print(f"ai-bar: elenco finestre disattivato: {exc}", file=sys.stderr)
+            return
+
+        self._update_window_list()
+        self.window_list_poll_id = GLib.timeout_add_seconds(WINDOW_LIST_REFRESH_SECONDS, self._update_window_list)
+
+    def _update_window_list(self) -> bool:
+        if self.window_flow is None or self.wnck_screen is None:
+            return False
+
+        try:
+            self.wnck_screen.force_update()
+            active_workspace = self.wnck_screen.get_active_workspace()
+            active_window = self.wnck_screen.get_active_window()
+            windows = []
+
+            for window in self.wnck_screen.get_windows_stacked():
+                xid = int(window.get_xid())
+                if xid == self.own_xid or window.is_skip_tasklist():
+                    continue
+                if active_workspace is not None and not window.is_pinned() and not window.is_on_workspace(active_workspace):
+                    continue
+
+                title = clean_window_title(window.get_name() or "")
+                windows.append(WindowInfo(xid=xid, title=title, active=window == active_window))
+        except Exception as exc:
+            print(f"ai-bar: elenco finestre non aggiornato: {exc}", file=sys.stderr)
+            return True
+
+        signature = tuple((window.xid, window.title, window.active) for window in windows)
+        if signature == self.window_list_signature:
+            return True
+
+        for child in self.window_children:
+            child.destroy()
+        self.window_children.clear()
+
+        for window in windows:
+            child = self._add_flow_child(self.window_flow, self._build_window_button(window))
+            self.window_children.append(child)
+
+        self.window_list_signature = signature
+        self.window_flow.show_all()
+        return True
+
+    def _activate_window(self, xid: int) -> None:
+        if self.wnck_screen is None:
+            return
+        window = find_window_by_xid(self.wnck_screen.get_windows_stacked(), xid)
+        if window is None:
+            return
+        try:
+            window.activate(Gtk.get_current_event_time())
+        except Exception as exc:
+            print(f"ai-bar: finestra non attivata {xid}: {exc}", file=sys.stderr)
+
+    def _launch(self, command: str | list[str]) -> None:
+        try:
+            if isinstance(command, str):
+                subprocess.Popen(command, shell=True, start_new_session=True)
+            else:
+                subprocess.Popen(command, start_new_session=True)
+        except Exception as exc:
+            self._show_error(f"Comando non avviato: {command}\n{exc}")
+
+    def _restart_terminal(self, command: str | list[str]) -> None:
+        if self.terminal_wrap is None:
+            self._show_error("Terminale non disponibile.")
+            return
+
+        if self.terminal is not None:
+            pty = self.terminal.get_pty()
+            if pty is not None:
+                pty.close()
+            self.terminal.destroy()
+
+        terminal = self._build_terminal(command)
+        self.terminal_wrap.pack_start(terminal, True, True, 8)
+        terminal.show_all()
+        self.present()
+        terminal.grab_focus()
+
+    def _reload(self) -> None:
+        if self.xapp_tray_host is not None:
+            self.xapp_tray_host.stop()
+        if self.tray_host is not None:
+            self.tray_host.stop()
+        executable = sys.executable or "python3"
+        os.execvp(executable, [executable, "-m", "ai_bar", *sys.argv[1:]])
+
+    def _show_error(self, message: str) -> None:
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text=message,
+        )
+        dialog.run()
+        dialog.destroy()
+
+    def _apply_panel_geometry(self) -> None:
+        panel = self.config["panel"]
+        width = self.panel_width
+        geometry = self._monitor_geometry()
+        height_config = panel.get("height", "screen")
+        height = geometry.height if height_config == "screen" else int(height_config)
+        side = panel.get("side", "left")
+        x = panel_x_for_state(side, geometry.x, geometry.width, width, self.panel_hidden)
+        y = geometry.y
+
+        self.set_default_size(width, height)
+        self.resize(width, height)
+        self.move(x, y)
+
+    def _set_panel_width(self, width: int) -> None:
+        geometry = self._monitor_geometry()
+        self.panel_width = max(120, min(int(width), geometry.width))
+        self._apply_panel_geometry()
+        self._apply_strut()
+
+    def _toggle_panel_visibility(self) -> None:
+        if self.panel_animation_id is not None:
+            GLib.source_remove(self.panel_animation_id)
+            self.panel_animation_id = None
+
+        self.panel_hidden = not self.panel_hidden
+        if self.panel_hidden:
+            self._clear_strut()
+        else:
+            self.present()
+
+        target_x = self._target_panel_x()
+        self.panel_animation_id = GLib.timeout_add(PANEL_ANIMATION_INTERVAL_MS, self._animate_panel_to, target_x)
+
+    def _target_panel_x(self) -> int:
+        geometry = self._monitor_geometry()
+        return panel_x_for_state(
+            self.config["panel"].get("side", "left"),
+            geometry.x,
+            geometry.width,
+            self.panel_width,
+            self.panel_hidden,
+        )
+
+    def _animate_panel_to(self, target_x: int) -> bool:
+        current_x, _current_y = self.get_position()
+        geometry = self._monitor_geometry()
+        distance = target_x - current_x
+        if abs(distance) <= 3:
+            self.move(target_x, geometry.y)
+            self.panel_animation_id = None
+            if not self.panel_hidden:
+                self._apply_strut()
+                GLib.idle_add(self._focus_terminal)
+            return False
+
+        step = max(PANEL_ANIMATION_MIN_STEP, abs(distance) // 3)
+        self.move(current_x + (step if distance > 0 else -step), geometry.y)
+        return True
+
+    def _monitor_geometry(self) -> Gdk.Rectangle:
+        display = Gdk.Display.get_default()
+        monitor = display.get_primary_monitor() or display.get_monitor(0)
+        return monitor.get_geometry()
+
+    def _apply_strut(self) -> None:
+        if self.panel_hidden or not self.config.get("panel", {}).get("reserve_space", True):
+            self._clear_strut()
+            return
+        if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            return
+
+        geometry = self._monitor_geometry()
+        start_y = geometry.y
+        end_y = geometry.y + geometry.height - 1
+        side = self.config["panel"].get("side", "left")
+        width = self.panel_width
+
+        if side == "left":
+            values = [width, 0, 0, 0, start_y, end_y, 0, 0, 0, 0, 0, 0]
+        else:
+            values = [0, width, 0, 0, 0, 0, start_y, end_y, 0, 0, 0, 0]
+        self._set_strut_values(values)
+
+    def _clear_strut(self) -> None:
+        self._set_strut_values([0] * 12, quiet=True)
+
+    def _set_strut_values(self, values: list[int], quiet: bool = False) -> None:
+        if X is None or xlib_display is None or os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            return
+
+        gdk_window = self.get_window()
+        if gdk_window is None:
+            return
+
+        try:
+            xid = GdkX11.X11Window.get_xid(gdk_window)
+            xdisplay = xlib_display.Display()
+            xwindow = xdisplay.create_resource_object("window", xid)
+            cardinal = xdisplay.intern_atom("CARDINAL")
+            strut = xdisplay.intern_atom("_NET_WM_STRUT")
+            strut_partial = xdisplay.intern_atom("_NET_WM_STRUT_PARTIAL")
+            xwindow.change_property(strut, cardinal, 32, values[:4])
+            xwindow.change_property(strut_partial, cardinal, 32, values)
+            xdisplay.flush()
+        except Exception as exc:
+            if not quiet:
+                print(f"ai-bar: impossibile impostare lo spazio dock: {exc}", file=sys.stderr)
+
+    def _install_css(self) -> None:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+
+def terminal_argv(command: str | list[str] | None) -> list[str]:
+    shell = os.environ.get("SHELL", "/bin/bash")
+    if command is None:
+        return [shell]
+    return [shell, "-lc", command_to_shell_line(command)]
+
+
+def command_to_shell_line(command: str | list[str]) -> str:
+    if isinstance(command, str):
+        return command
+    return " ".join(shlex.quote(part) for part in command)
+
+
+def run_text_command(argv: list[str], timeout: float = 2.0) -> str:
+    try:
+        completed = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception:
+        return ""
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip()
+
+
+def volume_state_from_wpctl(output: str) -> VolumeState | None:
+    match = re.search(r"Volume:\s*([0-9]+(?:\.[0-9]+)?)", output)
+    if not match:
+        return None
+    return VolumeState(
+        percent=round(float(match.group(1)) * 100),
+        muted="muted" in output.lower(),
+    )
+
+
+def volume_state_from_pactl(volume_output: str, mute_output: str = "") -> VolumeState | None:
+    matches = re.findall(r"(\d+)%", volume_output)
+    if not matches:
+        return None
+    return VolumeState(
+        percent=max(int(match) for match in matches),
+        muted="yes" in mute_output.lower(),
+    )
+
+
+def volume_icon_name(percent: int, muted: bool) -> str:
+    if muted or percent == 0:
+        return "audio-volume-muted-symbolic"
+    if percent < 34:
+        return "audio-volume-low-symbolic"
+    if percent < 67:
+        return "audio-volume-medium-symbolic"
+    return "audio-volume-high-symbolic"
+
+
+def volume_status_from_wpctl(output: str) -> str:
+    state = volume_state_from_wpctl(output)
+    if state is None:
+        return ""
+    return "Mute" if state.muted else f"{state.percent}%"
+
+
+def volume_status_from_pactl(output: str) -> str:
+    state = volume_state_from_pactl(output)
+    if state is None:
+        return ""
+    return f"{state.percent}%"
+
+
+def read_volume_state() -> VolumeState | None:
+    state = volume_state_from_wpctl(run_text_command(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]))
+    if state is not None:
+        return state
+
+    return volume_state_from_pactl(
+        run_text_command(["pactl", "get-sink-volume", "@DEFAULT_SINK@"]),
+        run_text_command(["pactl", "get-sink-mute", "@DEFAULT_SINK@"]),
+    )
+
+
+def read_volume_status() -> str:
+    state = read_volume_state()
+    if state is None:
+        return "Vol"
+    return "Mute" if state.muted else f"{state.percent}%"
+
+
+def run_system_command(argv: list[str], timeout: float = 2.0) -> bool:
+    try:
+        completed = subprocess.run(
+            argv,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except Exception:
+        return False
+    return completed.returncode == 0
+
+
+def set_system_volume(percent: int) -> bool:
+    percent = max(0, min(percent, 100))
+    if run_system_command(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{percent}%"]):
+        return True
+    return run_system_command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{percent}%"])
+
+
+def set_system_muted(muted: bool) -> bool:
+    value = "1" if muted else "0"
+    if run_system_command(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", value]):
+        return True
+    return run_system_command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", value])
+
+
+def read_wifi_status() -> str:
+    output = run_text_command(["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi"])
+    for line in output.splitlines():
+        parts = line.split(":")
+        if len(parts) >= 3 and parts[0] == "yes":
+            ssid = parts[1] or "Wi-Fi"
+            signal = parts[2]
+            return f"{ssid} {signal}%"
+    return "Wi-Fi"
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="ai-bar side toolbar")
+    parser.add_argument("--config", type=Path, default=None, help="percorso del file config JSON")
+    parser.add_argument(
+        "--print-default-config",
+        action="store_true",
+        help="stampa la configurazione predefinita ed esce",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    if args.print_default_config:
+        print(json.dumps(default_config(), indent=2))
+        return 0
+
+    try:
+        config = load_config(args.config)
+    except (OSError, json.JSONDecodeError, ConfigError) as exc:
+        print(f"ai-bar: configurazione non valida: {exc}", file=sys.stderr)
+        return 2
+
+    AiBarWindow(config, args.config)
+    Gtk.main()
+    return 0

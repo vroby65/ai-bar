@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=AI Bar Openbox
+Comment=Openbox session with ai-bar side panel
+Exec=/usr/local/bin/ai-bar-openbox-session
+TryExec=/usr/bin/openbox-session
+Icon=openbox
+Type=Application
