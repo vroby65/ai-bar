@@ -1,0 +1,8 @@
+[project]
+name = "ds-bar"
+version = "0.1.0"
+description = "A configurable GTK side toolbar with launchers, status items, tray hosting, and an embedded terminal."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

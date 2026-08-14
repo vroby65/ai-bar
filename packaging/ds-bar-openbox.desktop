@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=DS Bar Openbox
+Comment=Openbox session with ds-bar side panel
+Exec=/usr/local/bin/ds-bar-openbox-session
+TryExec=/usr/bin/openbox-session
+Icon=openbox
+Type=Application

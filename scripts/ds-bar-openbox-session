@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -u
+
+APP_DIR="/home/user/sviluppo/Esperimenti/ds-bar"
+CONFIG_DIR="${XDG_CONFIG_HOME:-"$HOME/.config"}/ds-bar"
+CONFIG_FILE="${DS_BAR_CONFIG:-"$CONFIG_DIR/config.json"}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+OPENBOX_SESSION="${OPENBOX_SESSION:-/usr/bin/openbox-session}"
+
+mkdir -p "$CONFIG_DIR"
+if [ ! -f "$CONFIG_FILE" ] && [ -r "$APP_DIR/config.example.json" ]; then
+    cp "$APP_DIR/config.example.json" "$CONFIG_FILE"
+fi
+
+export DESKTOP_SESSION="ds-bar-openbox"
+export XDG_CURRENT_DESKTOP="Openbox"
+export XDG_SESSION_DESKTOP="ds-bar-openbox"
+
+"$OPENBOX_SESSION" &
+openbox_pid=$!
+
+sleep "${DS_BAR_START_DELAY:-1}"
+(
+    cd "$APP_DIR" || exit 1
+    exec "$PYTHON_BIN" -m ds_bar --config "$CONFIG_FILE"
+) &
+bar_pid=$!
+
+trap 'kill "$bar_pid" 2>/dev/null; kill "$openbox_pid" 2>/dev/null' INT TERM EXIT
+
+wait "$openbox_pid"
+status=$?
+
+kill "$bar_pid" 2>/dev/null
+wait "$bar_pid" 2>/dev/null || true
+trap - INT TERM EXIT
+
+exit "$status"

@@ -1,0 +1,126 @@
+{
+  "panel": {
+    "side": "left",
+    "width": 400,
+    "height": "screen",
+    "decorated": false,
+    "keep_above": true,
+    "resizable": true,
+    "reserve_space": true
+  },
+  "clock": {
+    "time_format": "%H:%M:%S",
+    "date_format": "%A %d %B %Y"
+  },
+  "tray": {
+    "xembed": true,
+    "icon_size": 24,
+    "status_refresh_seconds": 5,
+    "items": [
+      {
+        "type": "volume",
+        "label": "Volume",
+        "icon": "audio-volume-high-symbolic",
+        "command": ["pavucontrol"]
+      },
+      {
+        "type": "wifi",
+        "label": "Wi-Fi",
+        "icon": "network-wireless-symbolic",
+        "command": ["nm-connection-editor"]
+      },
+      {
+        "type": "command",
+        "label": "Telegram",
+        "icon": "telegram",
+        "command": ["telegram-desktop"]
+      }
+    ]
+  },
+  "launcher_groups": [
+    {
+      "title": "Programmi",
+      "columns": 4,
+      "buttons": [
+        {
+          "label": "Terminale",
+          "icon": "utilities-terminal-symbolic",
+          "command": ["gnome-terminal"]
+        },
+        {
+          "label": "Firefox",
+          "icon": "firefox",
+          "command": ["firefox"]
+        },
+        {
+          "label": "Chrome",
+          "icon": "google-chrome",
+          "command": ["google-chrome"]
+        },
+        {
+          "label": "Caja",
+          "icon": "system-file-manager-symbolic",
+          "command": ["caja"]
+        }
+      ]
+    },
+    {
+      "title": "Dev",
+      "columns": 4,
+      "buttons": [
+        {
+          "label": "Codex",
+          "icon": "utilities-terminal-symbolic",
+          "command": ["codex"],
+          "target": "terminal"
+        },
+        {
+          "label": "DS Code",
+          "icon": "accessories-text-editor-symbolic",
+          "command": ["ds-code"],
+          "target": "terminal"
+        },
+        {
+          "label": "Hermes",
+          "icon": "applications-development-symbolic",
+          "command": ["hermes"],
+          "target": "terminal"
+        },
+        {
+          "label": "Picoclaw",
+          "icon": "accessories-text-editor-symbolic",
+          "command": ["picoclaw"],
+          "target": "terminal"
+        }
+      ]
+    }
+  ],
+  "terminal": {
+    "command": null,
+    "working_directory": null,
+    "font": "Monospace 10",
+    "scrollback_lines": 10000
+  },
+  "session_buttons": [
+    {
+      "label": "Reload",
+      "icon": "view-refresh-symbolic",
+      "action": "reload"
+    },
+    {
+      "label": "Logout",
+      "icon": "system-log-out-symbolic",
+      "command": ["openbox", "--exit"]
+    },
+    {
+      "label": "Reboot",
+      "icon": "system-reboot-symbolic",
+      "command": ["systemctl", "reboot"]
+    },
+    {
+      "label": "Powerdown",
+      "icon": "system-shutdown-symbolic",
+      "command": ["systemctl", "poweroff"]
+    }
+  ]
+}
