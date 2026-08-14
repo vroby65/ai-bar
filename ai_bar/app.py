@@ -376,7 +376,7 @@ class AiBarWindow(Gtk.Window):
         status_flow.set_max_children_per_line(20)
         status_flow.set_column_spacing(6)
         status_flow.set_row_spacing(6)
-        status_flow.set_direction(Gtk.TextDirection.RTL)
+        status_flow.set_direction(Gtk.TextDirection.LTR)
 
         for item in self.config.get("tray", {}).get("items", []):
             self._add_flow_child(status_flow, self._build_status_button(item))
@@ -388,7 +388,7 @@ class AiBarWindow(Gtk.Window):
         tray_flow.set_max_children_per_line(20)
         tray_flow.set_column_spacing(6)
         tray_flow.set_row_spacing(6)
-        tray_flow.set_direction(Gtk.TextDirection.RTL)
+        tray_flow.set_direction(Gtk.TextDirection.LTR)
 
         icon_size = int(self.config.get("tray", {}).get("icon_size", 24))
         self.xapp_tray_host = XAppStatusIconHost(

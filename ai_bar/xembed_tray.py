@@ -188,6 +188,9 @@ class XEmbedTrayHost:
             print(f"ai-bar: impossibile agganciare tray icon {xid}: {exc}", file=sys.stderr)
             flow_child.destroy()
             return
+        if socket.get_plug_window() is None:
+            flow_child.destroy()
+            return
 
         self.sockets[xid] = cell
         self.flow_children[xid] = flow_child

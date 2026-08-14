@@ -9,6 +9,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
 from ai_bar.xapp_tray import (
+    XAppStatusIconButton,
     XAppStatusIconHost,
     icon_key,
     menu_anchor_for_side,
@@ -34,6 +35,58 @@ class FakeMonitor:
 
 
 class XAppStatusIconHostTests(unittest.TestCase):
+    def test_hidden_icon_stays_hidden_when_tray_is_shown(self):
+        class FakeProxy:
+            def __init__(self):
+                self.handlers = {}
+                self.props = SimpleNamespace(
+                    icon_name=" ", label="", tooltip_text="", visible=False
+                )
+                self.next_handler_id = 1
+
+            def get_name(self):
+                return "org.x.StatusIcon.hidden"
+
+            def get_object_path(self):
+                return "/org/x/StatusIcon/hidden"
+
+            def connect(self, signal, callback):
+                handler_id = self.next_handler_id
+                self.next_handler_id += 1
+                self.handlers[handler_id] = (signal, callback)
+                return handler_id
+
+            def disconnect(self, handler_id):
+                self.handlers.pop(handler_id)
+
+            def set_visible(self, visible):
+                self.props.visible = visible
+                for signal, callback in self.handlers.values():
+                    if signal == "notify::visible":
+                        callback(self, None)
+
+        proxy = FakeProxy()
+        flow = Gtk.FlowBox()
+        host = XAppStatusIconHost(flow)
+        host._on_icon_added(None, proxy)
+        button = next(iter(host.buttons.values()))
+        flow_child = next(iter(host.flow_children.values()))
+
+        self.assertTrue(button.image.get_visible())
+        flow.show_all()
+        self.assertFalse(button.get_visible())
+
+        self.assertFalse(flow_child.get_visible())
+        proxy.set_visible(True)
+        self.assertTrue(button.get_visible())
+        self.assertTrue(flow_child.get_visible())
+        proxy.set_visible(False)
+        self.assertFalse(button.get_visible())
+        self.assertFalse(flow_child.get_visible())
+
+        host.stop()
+        flow.destroy()
+
     def test_start_registers_xapp_monitor_until_stop(self):
         monitor = FakeMonitor()
         xapp = SimpleNamespace(StatusIconMonitor=lambda: monitor)

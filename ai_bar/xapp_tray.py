@@ -56,6 +56,7 @@ class XAppStatusIconButton(Gtk.Button):
         box.pack_start(self.label, False, False, 0)
         self.add(box)
         self.show_all()
+        self.set_no_show_all(True)
 
         try:
             self.proxy.props.icon_size = self.icon_size
@@ -119,7 +120,11 @@ class XAppStatusIconButton(Gtk.Button):
         self.set_tooltip_markup(self.proxy.props.tooltip_text or None)
 
     def _on_visible_changed(self, _proxy: Any, _pspec: Any) -> None:
-        self.set_visible(bool(self.proxy.props.visible))
+        visible = bool(self.proxy.props.visible)
+        self.set_visible(visible)
+        parent = self.get_parent()
+        if parent is not None:
+            parent.set_visible(visible)
 
     def _menu_anchor(self) -> tuple[int, int, Gtk.PositionType]:
         window = self.get_window()
@@ -228,8 +233,12 @@ class XAppStatusIconHost:
         button.set_halign(Gtk.Align.CENTER)
         self.buttons[key] = button
         self.container.insert(button, -1)
-        self.flow_children[key] = button.get_parent()
-        button.set_visible(bool(proxy.props.visible))
+        flow_child = button.get_parent()
+        flow_child.set_no_show_all(True)
+        self.flow_children[key] = flow_child
+        visible = bool(proxy.props.visible)
+        button.set_visible(visible)
+        flow_child.set_visible(visible)
 
     def _on_icon_removed(self, _monitor: Any, proxy: Any) -> None:
         key = icon_key(proxy)

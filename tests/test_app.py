@@ -29,7 +29,7 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 class ClockLayoutTests(unittest.TestCase):
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_tray_hosts_share_a_separate_right_aligned_flow(self, xapp_host, xembed_host):
+    def test_status_and_tray_flows_are_left_aligned(self, xapp_host, xembed_host):
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = {
             "panel": {"side": "left"},
@@ -41,9 +41,10 @@ class ClockLayoutTests(unittest.TestCase):
         window.xapp_tray_host = None
 
         status_area = window._build_tray_row()
-        _status_flow, tray_flow, _window_flow = status_area.get_children()
+        status_flow, tray_flow, _window_flow = status_area.get_children()
 
-        self.assertEqual(tray_flow.get_direction(), Gtk.TextDirection.RTL)
+        self.assertEqual(status_flow.get_direction(), Gtk.TextDirection.LTR)
+        self.assertEqual(tray_flow.get_direction(), Gtk.TextDirection.LTR)
         xapp_host.assert_called_once_with(tray_flow, 24, "left")
         xembed_host.assert_called_once_with(tray_flow, 24)
 
