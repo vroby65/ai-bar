@@ -1,22 +1,28 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("Vte", "2.91")
 
-from gi.repository import Gtk
+from gi.repository import Gdk, GdkPixbuf, Gtk, Vte
 
 from ai_bar.app import (
     AiBarWindow,
+    WindowInfo,
     clean_window_title,
     clock_labels_fit_inline,
     find_window_by_xid,
+    maximize_launched_window,
     panel_x_for_state,
     set_system_muted,
     set_system_volume,
     terminal_argv,
+    terminal_session_key,
     volume_icon_name,
     volume_state_from_pactl,
     volume_state_from_wpctl,
@@ -27,6 +33,78 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 
 
 class ClockLayoutTests(unittest.TestCase):
+    def test_window_button_uses_the_application_icon(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        icon = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 16, 16)
+
+        button = window._build_window_button(WindowInfo(1, "Firefox", False, icon))
+
+        image = button.get_child().get_children()[0]
+        self.assertEqual(image.get_storage_type(), Gtk.ImageType.PIXBUF)
+        self.assertIsNotNone(image.get_pixbuf())
+        button.destroy()
+
+    def test_window_button_falls_back_to_the_generic_icon(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+
+        button = window._build_window_button(WindowInfo(1, "Finestra", False, None))
+
+        image = button.get_child().get_children()[0]
+        self.assertEqual(image.get_icon_name()[0], "window-symbolic")
+        button.destroy()
+
+    def test_maximized_launcher_requests_a_maximized_window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch = Mock()
+        button = window._build_launcher_button(
+            {
+                "label": "Firefox",
+                "command": ["firefox"],
+                "maximized": True,
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch.assert_called_once_with(["firefox"], maximized=True)
+        button.destroy()
+
+    def test_maximize_launched_window_ignores_windows_present_before_launch(self):
+        class Window:
+            def __init__(self, xid):
+                self.xid = xid
+                self.maximized = False
+
+            def get_xid(self):
+                return self.xid
+
+            def maximize(self):
+                self.maximized = True
+
+        old_window = Window(10)
+        new_window = Window(20)
+
+        self.assertTrue(maximize_launched_window([old_window, new_window], {10}, None, None, 99))
+        self.assertFalse(old_window.maximized)
+        self.assertTrue(new_window.maximized)
+
+    def test_maximize_launched_window_accepts_a_newly_activated_existing_window(self):
+        class Window:
+            def __init__(self, xid):
+                self.xid = xid
+                self.maximized = False
+
+            def get_xid(self):
+                return self.xid
+
+            def maximize(self):
+                self.maximized = True
+
+        browser_window = Window(10)
+
+        self.assertTrue(maximize_launched_window([browser_window], {10}, browser_window, 99, 99))
+        self.assertTrue(browser_window.maximized)
+
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
     def test_status_and_tray_flows_are_left_aligned(self, xapp_host, xembed_host):
@@ -59,6 +137,115 @@ class ClockLayoutTests(unittest.TestCase):
             self.assertEqual(terminal_argv(["hermes"]), ["/bin/bash", "-lc", "hermes"])
             self.assertEqual(terminal_argv(["codex", "my project"]), ["/bin/bash", "-lc", "codex 'my project'"])
             self.assertEqual(terminal_argv(None), ["/bin/bash"])
+
+    def test_terminal_argv_passes_panel_width(self):
+        with patch.dict(os.environ, {"SHELL": "/bin/bash"}):
+            self.assertEqual(
+                terminal_argv(["fish"], width_px=511),
+                ["env", "AI_BAR_TERMINAL_WIDTH_PX=511", "/bin/bash", "-lc", "fish"],
+            )
+
+    def test_terminal_session_key_reuses_the_same_tool_session(self):
+        self.assertEqual(terminal_session_key(["hermes"]), terminal_session_key(["hermes"]))
+        self.assertNotEqual(terminal_session_key(["hermes"]), terminal_session_key(["codex"]))
+
+    def test_switch_terminal_reuses_an_existing_session(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        hermes = Mock()
+        window.terminals = {terminal_session_key(["hermes"]): hermes}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.page_num.return_value = 2
+        window._build_terminal = Mock()
+        window.present = Mock()
+
+        window._switch_terminal(["hermes"])
+
+        window._build_terminal.assert_not_called()
+        window.terminal_notebook.set_current_page.assert_called_once_with(2)
+        hermes.grab_focus.assert_called_once_with()
+        self.assertIs(window.terminal, hermes)
+
+    def test_switch_terminal_keeps_other_tool_sessions_alive(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        hermes = Mock()
+        codex = Mock()
+        window.terminals = {terminal_session_key(["hermes"]): hermes}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.append_page.return_value = 1
+        window._build_terminal = Mock(return_value=codex)
+        window.present = Mock()
+        window.panel_width = 400
+
+        window._switch_terminal(["codex"])
+
+        self.assertIs(window.terminals[terminal_session_key(["hermes"])], hermes)
+        self.assertIs(window.terminals[terminal_session_key(["codex"])], codex)
+        hermes.destroy.assert_not_called()
+
+    def test_new_terminal_is_shown_before_becoming_visible_child(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        terminal = Mock()
+        calls = []
+        terminal.show_all.side_effect = lambda: calls.append("show")
+        window.terminals = {}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.append_page.return_value = 1
+        window.terminal_notebook.set_current_page.side_effect = lambda _page: calls.append("select")
+        window._build_terminal = Mock(return_value=terminal)
+        window.present = Mock()
+        window.panel_width = 400
+
+        window._switch_terminal(["codex"])
+
+        self.assertEqual(calls, ["show", "select"])
+
+    def test_switch_terminal_creates_a_named_tab_for_the_tool(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        terminal = Mock()
+        window.terminals = {}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.append_page.return_value = 0
+        window._build_terminal = Mock(return_value=terminal)
+        window.present = Mock()
+        window.panel_width = 400
+
+        window._switch_terminal(["ds-code"])
+
+        tab_label = window.terminal_notebook.append_page.call_args.args[1]
+        self.assertEqual(tab_label.get_text(), "DS Code")
+        tab_label.destroy()
+
+    def test_terminal_copy_and_paste_shortcuts(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        terminal = Mock()
+        copy_event = Mock(state=Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK, keyval=Gdk.KEY_c)
+        paste_event = Mock(state=Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK, keyval=Gdk.KEY_v)
+
+        self.assertTrue(window._on_terminal_key_press(terminal, copy_event))
+        self.assertTrue(window._on_terminal_key_press(terminal, paste_event))
+
+        terminal.copy_clipboard_format.assert_called_once_with(Vte.Format.TEXT)
+        terminal.paste_clipboard.assert_called_once_with()
+
+    @patch("ai_bar.app.Vte.Terminal")
+    def test_terminal_uses_readable_blue_palette(self, terminal_class):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {
+            "terminal": {
+                "command": None,
+                "working_directory": "/tmp",
+                "font": None,
+                "scrollback_lines": 100,
+            }
+        }
+
+        window._build_terminal()
+
+        foreground, background, palette = terminal_class.return_value.set_colors.call_args.args
+        self.assertEqual(foreground.to_string(), "rgb(242,242,238)")
+        self.assertEqual(background.to_string(), "rgb(21,24,25)")
+        self.assertEqual(palette[4].to_string(), "rgb(108,182,255)")
+        self.assertEqual(palette[12].to_string(), "rgb(165,214,255)")
 
     def test_panel_x_for_state_slides_off_screen(self):
         self.assertEqual(panel_x_for_state("left", 0, 1920, 400, False), 0)

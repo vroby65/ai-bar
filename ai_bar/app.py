@@ -45,6 +45,28 @@ WINDOW_LIST_REFRESH_SECONDS = 2
 PANEL_ANIMATION_INTERVAL_MS = 16
 PANEL_ANIMATION_MIN_STEP = 18
 VOLUME_UPDATE_DELAY_MS = 120
+LAUNCH_MAXIMIZE_INTERVAL_MS = 100
+LAUNCH_MAXIMIZE_ATTEMPTS = 50
+TERMINAL_FOREGROUND = "#f2f2ee"
+TERMINAL_BACKGROUND = "#151819"
+TERMINAL_PALETTE = (
+    "#3b4042",
+    "#ff6b6b",
+    "#8bd450",
+    "#f4bf75",
+    "#6cb6ff",
+    "#d38aea",
+    "#67d8ef",
+    "#d8dee9",
+    "#687176",
+    "#ff8787",
+    "#a6e22e",
+    "#ffd866",
+    "#a5d6ff",
+    "#e5b2ff",
+    "#8be9fd",
+    "#ffffff",
+)
 
 
 def clock_labels_fit_inline(available_width: int, time_width: int, date_width: int, spacing: int) -> bool:
@@ -61,6 +83,14 @@ def clean_window_title(title: str) -> str:
     return " ".join(title.split()) or "Finestra"
 
 
+def terminal_tab_label(command: str | list[str] | None) -> str:
+    if not command:
+        return "Terminale"
+    first = shlex.split(command)[0] if isinstance(command, str) else command[0]
+    name = Path(first).name
+    return {"ds-code": "DS Code"}.get(name, name.capitalize())
+
+
 def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
     for window in windows:
         if int(window.get_xid()) == xid:
@@ -68,11 +98,34 @@ def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
     return None
 
 
+def maximize_launched_window(
+    windows: list[Any],
+    existing_xids: set[int],
+    active_window: Any | None,
+    previous_active_xid: int | None,
+    own_xid: int | None,
+) -> bool:
+    for window in reversed(windows):
+        xid = int(window.get_xid())
+        if xid != own_xid and xid not in existing_xids:
+            window.maximize()
+            return True
+
+    if active_window is not None:
+        xid = int(active_window.get_xid())
+        if xid != own_xid and xid != previous_active_xid:
+            active_window.maximize()
+            return True
+
+    return False
+
+
 @dataclass(frozen=True)
 class WindowInfo:
     xid: int
     title: str
     active: bool
+    icon: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -287,7 +340,8 @@ class AiBarWindow(Gtk.Window):
         self.volume_should_unmute = False
         self.volume_update_timeout_id: int | None = None
         self.terminal: Vte.Terminal | None = None
-        self.terminal_wrap: Gtk.Box | None = None
+        self.terminals: dict[str, Vte.Terminal] = {}
+        self.terminal_notebook: Gtk.Notebook | None = None
         self.wnck_screen: Any = None
         self.window_flow: Gtk.FlowBox | None = None
         self.window_children: list[Gtk.FlowBoxChild] = []
@@ -330,10 +384,20 @@ class AiBarWindow(Gtk.Window):
         for group in self.config.get("launcher_groups", []):
             content.pack_start(self._build_launcher_group(group), False, False, 0)
 
-        self.terminal_wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.terminal_wrap.get_style_context().add_class("terminal-wrap")
-        self.terminal_wrap.pack_start(self._build_terminal(), True, True, 8)
-        content.pack_start(self.terminal_wrap, True, True, 0)
+        self.terminal_notebook = Gtk.Notebook()
+        self.terminal_notebook.get_style_context().add_class("terminal-wrap")
+        self.terminal_notebook.set_show_tabs(False)
+        self.terminal_notebook.set_scrollable(True)
+        self.terminal_notebook.connect("switch-page", self._on_terminal_page_switched)
+        initial_command = self.config.get("terminal", {}).get("command")
+        initial_terminal = self._build_terminal(initial_command)
+        initial_key = terminal_session_key(initial_command)
+        self.terminals[initial_key] = initial_terminal
+        self.terminal_notebook.append_page(
+            initial_terminal,
+            Gtk.Label(label=terminal_tab_label(initial_command)),
+        )
+        content.pack_start(self.terminal_notebook, True, True, 0)
         content.pack_start(self._build_session_buttons(), False, False, 0)
 
         resizable = bool(self.config["panel"].get("resizable", True))
@@ -506,7 +570,10 @@ class AiBarWindow(Gtk.Window):
         button.connect("clicked", lambda _button: self._activate_window(info.xid))
 
         inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        image = Gtk.Image.new_from_icon_name("window-symbolic", Gtk.IconSize.MENU)
+        if info.icon is not None:
+            image = Gtk.Image.new_from_pixbuf(info.icon)
+        else:
+            image = Gtk.Image.new_from_icon_name("window-symbolic", Gtk.IconSize.MENU)
         inner.pack_start(image, False, False, 0)
 
         label = Gtk.Label(label=info.title)
@@ -542,9 +609,21 @@ class AiBarWindow(Gtk.Window):
         button.set_relief(Gtk.ReliefStyle.NONE)
         button.set_tooltip_text(str(button_config.get("label", "")))
         if button_config.get("target") == "terminal":
-            button.connect("clicked", lambda _button: self._restart_terminal(button_config["command"]))
+            button.connect(
+                "clicked",
+                lambda _button: self._switch_terminal(
+                    button_config["command"],
+                    str(button_config.get("label", "")),
+                ),
+            )
         else:
-            button.connect("clicked", lambda _button: self._launch(button_config["command"]))
+            button.connect(
+                "clicked",
+                lambda _button: self._launch(
+                    button_config["command"],
+                    maximized=bool(button_config.get("maximized", False)),
+                ),
+            )
 
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         inner.set_halign(Gtk.Align.CENTER)
@@ -602,7 +681,11 @@ class AiBarWindow(Gtk.Window):
         button.add(inner)
         return button
 
-    def _build_terminal(self, command: str | list[str] | None = None) -> Gtk.Widget:
+    def _build_terminal(
+        self,
+        command: str | list[str] | None = None,
+        width_px: int | None = None,
+    ) -> Gtk.Widget:
         terminal_config = self.config.get("terminal", {})
         terminal = Vte.Terminal()
         self.terminal = terminal
@@ -611,12 +694,27 @@ class AiBarWindow(Gtk.Window):
         terminal.set_vexpand(True)
         terminal.set_scrollback_lines(int(terminal_config.get("scrollback_lines", 10000)))
         terminal.connect("button-press-event", self._on_terminal_button_press)
+        terminal.connect("key-press-event", self._on_terminal_key_press)
+
+        foreground = Gdk.RGBA()
+        foreground.parse(TERMINAL_FOREGROUND)
+        background = Gdk.RGBA()
+        background.parse(TERMINAL_BACKGROUND)
+        palette = []
+        for color_value in TERMINAL_PALETTE:
+            color = Gdk.RGBA()
+            color.parse(color_value)
+            palette.append(color)
+        terminal.set_colors(foreground, background, palette)
 
         font = terminal_config.get("font")
         if font:
             terminal.set_font(Pango.FontDescription(str(font)))
 
-        argv = terminal_argv(command if command is not None else terminal_config.get("command"))
+        argv = terminal_argv(
+            command if command is not None else terminal_config.get("command"),
+            width_px=width_px,
+        )
         cwd = terminal_config.get("working_directory") or os.environ.get("HOME")
         terminal.spawn_async(
             Vte.PtyFlags.DEFAULT,
@@ -698,12 +796,51 @@ class AiBarWindow(Gtk.Window):
     def _on_terminal_button_press(self, terminal: Vte.Terminal, event: Gdk.EventButton) -> bool:
         self.present_with_time(event.time)
         terminal.grab_focus()
+        if event.button == 3:
+            self._build_terminal_menu(terminal).popup_at_pointer(event)
+            return True
         return False
+
+    def _on_terminal_key_press(self, terminal: Vte.Terminal, event: Gdk.EventKey) -> bool:
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        if ctrl and shift and event.keyval in (Gdk.KEY_c, Gdk.KEY_C):
+            terminal.copy_clipboard_format(Vte.Format.TEXT)
+            return True
+        if ctrl and shift and event.keyval in (Gdk.KEY_v, Gdk.KEY_V):
+            terminal.paste_clipboard()
+            return True
+        if ctrl and event.keyval == Gdk.KEY_Insert:
+            terminal.copy_clipboard_format(Vte.Format.TEXT)
+            return True
+        if shift and event.keyval == Gdk.KEY_Insert:
+            terminal.paste_clipboard()
+            return True
+        return False
+
+    def _build_terminal_menu(self, terminal: Vte.Terminal) -> Gtk.Menu:
+        menu = Gtk.Menu()
+        copy_item = Gtk.MenuItem(label="Copia")
+        copy_item.connect("activate", lambda _item: terminal.copy_clipboard_format(Vte.Format.TEXT))
+        paste_item = Gtk.MenuItem(label="Incolla")
+        paste_item.connect("activate", lambda _item: terminal.paste_clipboard())
+        menu.append(copy_item)
+        menu.append(paste_item)
+        menu.show_all()
+        return menu
 
     def _focus_terminal(self) -> bool:
         if self.terminal is not None:
             self.terminal.grab_focus()
         return False
+
+    def _on_terminal_page_switched(
+        self,
+        _notebook: Gtk.Notebook,
+        terminal: Vte.Terminal,
+        _page: int,
+    ) -> None:
+        self.terminal = terminal
 
     def _on_resize_handle_realize(self, handle: Gtk.Widget) -> None:
         gdk_window = handle.get_window()
@@ -855,7 +992,14 @@ class AiBarWindow(Gtk.Window):
                     continue
 
                 title = clean_window_title(window.get_name() or "")
-                windows.append(WindowInfo(xid=xid, title=title, active=window == active_window))
+                windows.append(
+                    WindowInfo(
+                        xid=xid,
+                        title=title,
+                        active=window == active_window,
+                        icon=window.get_mini_icon(),
+                    )
+                )
         except Exception as exc:
             print(f"ai-bar: elenco finestre non aggiornato: {exc}", file=sys.stderr)
             return True
@@ -887,7 +1031,21 @@ class AiBarWindow(Gtk.Window):
         except Exception as exc:
             print(f"ai-bar: finestra non attivata {xid}: {exc}", file=sys.stderr)
 
-    def _launch(self, command: str | list[str]) -> None:
+    def _launch(self, command: str | list[str], maximized: bool = False) -> None:
+        existing_xids: set[int] | None = None
+        previous_active_xid: int | None = None
+        if maximized and self.wnck_screen is not None:
+            try:
+                self.wnck_screen.force_update()
+                existing_xids = {
+                    int(window.get_xid()) for window in self.wnck_screen.get_windows_stacked()
+                }
+                active_window = self.wnck_screen.get_active_window()
+                if active_window is not None:
+                    previous_active_xid = int(active_window.get_xid())
+            except Exception as exc:
+                print(f"ai-bar: stato finestre non disponibile: {exc}", file=sys.stderr)
+
         try:
             if isinstance(command, str):
                 subprocess.Popen(command, shell=True, start_new_session=True)
@@ -895,21 +1053,51 @@ class AiBarWindow(Gtk.Window):
                 subprocess.Popen(command, start_new_session=True)
         except Exception as exc:
             self._show_error(f"Comando non avviato: {command}\n{exc}")
+            return
 
-    def _restart_terminal(self, command: str | list[str]) -> None:
-        if self.terminal_wrap is None:
+        if existing_xids is not None:
+            attempts_remaining = LAUNCH_MAXIMIZE_ATTEMPTS
+
+            def maximize_when_ready() -> bool:
+                nonlocal attempts_remaining
+                try:
+                    self.wnck_screen.force_update()
+                    if maximize_launched_window(
+                        self.wnck_screen.get_windows_stacked(),
+                        existing_xids,
+                        self.wnck_screen.get_active_window(),
+                        previous_active_xid,
+                        self.own_xid,
+                    ):
+                        return False
+                except Exception as exc:
+                    print(f"ai-bar: finestra non massimizzata: {exc}", file=sys.stderr)
+                    return False
+
+                attempts_remaining -= 1
+                return attempts_remaining > 0
+
+            GLib.timeout_add(LAUNCH_MAXIMIZE_INTERVAL_MS, maximize_when_ready)
+
+    def _switch_terminal(self, command: str | list[str], label: str | None = None) -> None:
+        if self.terminal_notebook is None:
             self._show_error("Terminale non disponibile.")
             return
 
-        if self.terminal is not None:
-            pty = self.terminal.get_pty()
-            if pty is not None:
-                pty.close()
-            self.terminal.destroy()
-
-        terminal = self._build_terminal(command)
-        self.terminal_wrap.pack_start(terminal, True, True, 8)
+        key = terminal_session_key(command)
+        terminal = self.terminals.get(key)
+        if terminal is None:
+            terminal = self._build_terminal(command, width_px=self.panel_width)
+            self.terminals[key] = terminal
+            page = self.terminal_notebook.append_page(
+                terminal,
+                Gtk.Label(label=label or terminal_tab_label(command)),
+            )
+        else:
+            page = self.terminal_notebook.page_num(terminal)
+        self.terminal = terminal
         terminal.show_all()
+        self.terminal_notebook.set_current_page(page)
         self.present()
         terminal.grab_focus()
 
@@ -1051,11 +1239,21 @@ class AiBarWindow(Gtk.Window):
         )
 
 
-def terminal_argv(command: str | list[str] | None) -> list[str]:
+def terminal_argv(command: str | list[str] | None, width_px: int | None = None) -> list[str]:
     shell = os.environ.get("SHELL", "/bin/bash")
     if command is None:
-        return [shell]
-    return [shell, "-lc", command_to_shell_line(command)]
+        argv = [shell]
+    else:
+        argv = [shell, "-lc", command_to_shell_line(command)]
+    if width_px is not None:
+        return ["env", f"AI_BAR_TERMINAL_WIDTH_PX={width_px}", *argv]
+    return argv
+
+
+def terminal_session_key(command: str | list[str] | None) -> str:
+    if command is None:
+        return "__shell__"
+    return command_to_shell_line(command)
 
 
 def command_to_shell_line(command: str | list[str]) -> str:

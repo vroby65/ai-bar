@@ -2,16 +2,32 @@
 
 Pannello laterale GTK simile a una barra desktop: data/ora in alto, area tray/status con elenco finestre, due gruppi di launcher configurabili e terminale integrato nella parte bassa.
 
+## Installazione
+
+```bash
+./install.sh
+```
+
+Esegui lo script come utente normale, senza `sudo`: chiedera' i privilegi solo per installare i pacchetti di sistema e la sessione. L'installer:
+
+- installa le dipendenze su Debian, Ubuntu o Linux Mint
+- installa il comando `ai-bar` con `pipx`
+- crea `~/.config/ai-bar/config.json` se non esiste
+- installa la sessione `AI Bar Openbox` per il login manager
+
 ## Avvio
+
+Dopo l'installazione:
+
+```bash
+ai-bar
+ai-bar --config ~/.config/ai-bar/config.json
+```
+
+Per avviarlo direttamente dal checkout durante lo sviluppo:
 
 ```bash
 python3 -m ai_bar --config config.example.json
-```
-
-Dipendenze Debian/Ubuntu:
-
-```bash
-sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91 gir1.2-wnck-3.0 gir1.2-xapp-1.0 python3-xlib pulseaudio-utils network-manager
 ```
 
 ## Configurazione
@@ -24,24 +40,17 @@ Il file predefinito e' `~/.config/ai-bar/config.json`. Puoi partire da `config.e
 - `tray.items`: elementi laterali tipo volume, Telegram o comandi personalizzati
 - `launcher_groups`: gruppi di pulsanti, icone e comandi
 - `launcher_groups[].buttons[].target`: usa `terminal` per eseguire il comando nel terminale integrato
+- `launcher_groups[].buttons[].maximized`: apre la finestra esterna massimizzata
 - `terminal.command`: shell/comando da aprire nel terminale integrato
 - `session_buttons`: pulsanti in basso per reload, logout, reboot e powerdown
 
-Il tray integrato supporta le icone XApp e, nelle sessioni X11, le icone XEmbed. Le applet condividono una griglia allineata a destra e vanno a capo singolarmente quando non entrano in larghezza. Su Wayland e per alcune app AppIndicator/StatusNotifier moderne, gli elementi possono non comparire nel pannello; in quel caso resta disponibile la riga `tray.items` configurabile. Su X11 il tasto Super nasconde o mostra il pannello con slide laterale.
+I launcher Ai-tools aprono una scheda terminale separata per ciascun comando. Tornando su un tool gia' aperto viene selezionata la sua scheda, il processo continua in background e il terminale riceve il focus. Nel terminale usa `Ctrl+Shift+C` e `Ctrl+Shift+V` per copia e incolla, oppure il menu del tasto destro.
+
+Il tray integrato supporta le icone XApp e, nelle sessioni X11, le icone XEmbed. Le applet condividono una griglia allineata a sinistra e vanno a capo singolarmente quando non entrano in larghezza. Su Wayland e per alcune app AppIndicator/StatusNotifier moderne, gli elementi possono non comparire nel pannello; in quel caso resta disponibile la riga `tray.items` configurabile. Su X11 il tasto Super nasconde o mostra il pannello con slide laterale.
 
 ## Sessione LightDM/Openbox
 
-La sessione pronta e' `AI Bar Openbox`. Installa la voce LightDM con:
-
-```bash
-chmod +x scripts/ai-bar-openbox-session
-mkdir -p ~/.config/ai-bar
-cp --update=none config.example.json ~/.config/ai-bar/config.json
-pkexec install -m 755 scripts/ai-bar-openbox-session /usr/local/bin/ai-bar-openbox-session
-pkexec install -m 644 packaging/ai-bar-openbox.desktop /usr/share/xsessions/ai-bar-openbox.desktop
-```
-
-Poi esci dalla sessione grafica, scegli `AI Bar Openbox` nel selettore sessioni di LightDM ed entra. La configurazione usata al login e' `~/.config/ai-bar/config.json`.
+La sessione viene installata da `install.sh`. Esci dalla sessione grafica, scegli `AI Bar Openbox` nel selettore di LightDM ed entra. Il launcher cerca il comando installato da `pipx` e usa `~/.config/ai-bar/config.json` senza dipendere dal checkout del repository.
 
 ## Verifica
 

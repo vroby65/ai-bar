@@ -22,46 +22,50 @@
         "label": "Volume",
         "icon": "audio-volume-high-symbolic",
         "command": ["pavucontrol", "-t", "2"]
-      },
-      {
-        "type": "command",
-        "label": "Telegram",
-        "icon": "telegram",
-        "command": ["telegram-desktop"]
       }
     ]
   },
   "launcher_groups": [
     {
-      "title": "Programmi",
+      "title": "",
       "columns": 4,
       "buttons": [
         {
           "label": "Terminale",
           "icon": "utilities-terminal-symbolic",
-          "command": ["gnome-terminal"]
+          "command": ["gnome-terminal"],
+          "maximized": true
         },
         {
           "label": "Firefox",
           "icon": "firefox",
-          "command": ["firefox"]
+          "command": ["firefox"],
+          "maximized": true
         },
         {
           "label": "Chrome",
           "icon": "google-chrome",
-          "command": ["google-chrome"]
+          "command": ["google-chrome"],
+          "maximized": true
         },
         {
           "label": "Caja",
           "icon": "system-file-manager-symbolic",
-          "command": ["caja"]
+          "command": ["caja"],
+          "maximized": true
         }
       ]
     },
     {
-      "title": "Dev",
+      "title": "Ai-tools",
       "columns": 4,
       "buttons": [
+        {
+          "label": "Hermes",
+          "icon": "applications-development-symbolic",
+          "command": ["hermes"],
+          "target": "terminal"
+        },
         {
           "label": "Codex",
           "icon": "utilities-terminal-symbolic",
@@ -75,15 +79,9 @@
           "target": "terminal"
         },
         {
-          "label": "Hermes",
-          "icon": "applications-development-symbolic",
-          "command": ["hermes"],
-          "target": "terminal"
-        },
-        {
-          "label": "Picoclaw",
-          "icon": "accessories-text-editor-symbolic",
-          "command": ["picoclaw"],
+          "label": "terminal",
+          "icon": "utilities-terminal-symbolic",
+          "command": ["fish"],
           "target": "terminal"
         }
       ]

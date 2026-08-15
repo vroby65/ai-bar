@@ -14,13 +14,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["panel"]["side"], "left")
         self.assertTrue(config["panel"]["resizable"])
         self.assertEqual(config["launcher_groups"][0]["buttons"][0]["label"], "Terminale")
+        self.assertTrue(all(button["maximized"] for button in config["launcher_groups"][0]["buttons"]))
         self.assertEqual(
             [button["label"] for button in config["launcher_groups"][1]["buttons"]],
-            ["Codex", "DS Code", "Hermes", "Picoclaw"],
+            ["Hermes", "Codex", "DS Code", "terminal"],
         )
         self.assertTrue(all(button["target"] == "terminal" for button in config["launcher_groups"][1]["buttons"]))
         self.assertEqual(config["terminal"]["command"], ["hermes"])
-        self.assertEqual([item["type"] for item in config["tray"]["items"]], ["volume", "command"])
+        self.assertEqual([item["type"] for item in config["tray"]["items"]], ["volume"])
         self.assertEqual(config["tray"]["items"][0]["command"], ["pavucontrol", "-t", "2"])
         self.assertEqual(
             [button["label"] for button in config["session_buttons"]],

@@ -36,45 +36,49 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "icon": "audio-volume-high-symbolic",
                 "command": ["pavucontrol", "-t", "2"],
             },
-            {
-                "type": "command",
-                "label": "Telegram",
-                "icon": "telegram",
-                "command": ["telegram-desktop"],
-            },
         ],
     },
     "launcher_groups": [
         {
-            "title": "Programmi",
+            "title": "",
             "columns": 4,
             "buttons": [
                 {
                     "label": "Terminale",
                     "icon": "utilities-terminal-symbolic",
                     "command": ["gnome-terminal"],
+                    "maximized": True,
                 },
                 {
                     "label": "Firefox",
                     "icon": "firefox",
                     "command": ["firefox"],
+                    "maximized": True,
                 },
                 {
                     "label": "Chrome",
                     "icon": "google-chrome",
                     "command": ["google-chrome"],
+                    "maximized": True,
                 },
                 {
                     "label": "Caja",
                     "icon": "system-file-manager-symbolic",
                     "command": ["caja"],
+                    "maximized": True,
                 },
             ],
         },
         {
-            "title": "Dev",
+            "title": "Ai-tools",
             "columns": 4,
             "buttons": [
+                {
+                    "label": "Hermes",
+                    "icon": "applications-development-symbolic",
+                    "command": ["hermes"],
+                    "target": "terminal",
+                },
                 {
                     "label": "Codex",
                     "icon": "utilities-terminal-symbolic",
@@ -88,15 +92,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
                     "target": "terminal",
                 },
                 {
-                    "label": "Hermes",
-                    "icon": "applications-development-symbolic",
-                    "command": ["hermes"],
-                    "target": "terminal",
-                },
-                {
-                    "label": "Picoclaw",
-                    "icon": "accessories-text-editor-symbolic",
-                    "command": ["picoclaw"],
+                    "label": "terminal",
+                    "icon": "utilities-terminal-symbolic",
+                    "command": ["fish"],
                     "target": "terminal",
                 },
             ],
@@ -193,6 +191,8 @@ def validate_config(config: dict[str, Any]) -> None:
             target = button.get("target")
             if target is not None and target != "terminal":
                 raise ConfigError("launcher_groups[].buttons[].target deve essere 'terminal'.")
+            if not isinstance(button.get("maximized", False), bool):
+                raise ConfigError("launcher_groups[].buttons[].maximized deve essere true oppure false.")
             validate_command(button.get("command"), "launcher_groups[].buttons[].command")
 
     for item in config.get("tray", {}).get("items", []):

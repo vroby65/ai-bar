@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 set -u
 
-APP_DIR="/home/user/sviluppo/AI/AI-bar"
 CONFIG_DIR="${XDG_CONFIG_HOME:-"$HOME/.config"}/ai-bar"
 CONFIG_FILE="${AI_BAR_CONFIG:-"$CONFIG_DIR/config.json"}"
-PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 OPENBOX_SESSION="${OPENBOX_SESSION:-/usr/bin/openbox-session}"
 
+if [ -z "${AI_BAR_BIN:-}" ]; then
+    if command -v ai-bar >/dev/null 2>&1; then
+        AI_BAR_BIN="$(command -v ai-bar)"
+    elif [ -x "$HOME/.local/bin/ai-bar" ]; then
+        AI_BAR_BIN="$HOME/.local/bin/ai-bar"
+    else
+        echo "ai-bar-openbox-session: comando ai-bar non trovato." >&2
+        exit 1
+    fi
+fi
+
 mkdir -p "$CONFIG_DIR"
-if [ ! -f "$CONFIG_FILE" ] && [ -r "$APP_DIR/config.example.json" ]; then
-    cp "$APP_DIR/config.example.json" "$CONFIG_FILE"
+if [ ! -f "$CONFIG_FILE" ]; then
+    "$AI_BAR_BIN" --print-default-config > "$CONFIG_FILE"
 fi
 
 export DESKTOP_SESSION="ai-bar-openbox"
@@ -20,10 +29,26 @@ export XDG_SESSION_DESKTOP="ai-bar-openbox"
 openbox_pid=$!
 
 sleep "${AI_BAR_START_DELAY:-1}"
-(
-    cd "$APP_DIR" || exit 1
-    exec "$PYTHON_BIN" -m ai_bar --config "$CONFIG_FILE"
-) &
+run_ai_bar() {
+    while kill -0 "$openbox_pid" 2>/dev/null; do
+        "$AI_BAR_BIN" --config "$CONFIG_FILE" &
+        ai_bar_pid=$!
+        trap 'kill "$ai_bar_pid" 2>/dev/null; wait "$ai_bar_pid" 2>/dev/null; exit 0' INT TERM
+
+        wait "$ai_bar_pid"
+        ai_bar_status=$?
+        trap - INT TERM
+
+        if ! kill -0 "$openbox_pid" 2>/dev/null; then
+            break
+        fi
+
+        echo "ai-bar-openbox-session: ai-bar terminato (stato $ai_bar_status), riavvio..." >&2
+        sleep 1
+    done
+}
+
+run_ai_bar &
 bar_pid=$!
 
 trap 'kill "$bar_pid" 2>/dev/null; kill "$openbox_pid" 2>/dev/null' INT TERM EXIT
