@@ -294,6 +294,27 @@ class ClockLayoutTests(unittest.TestCase):
 
         callback.assert_not_called()
 
+    def test_super_toggle_parses_record_events_with_protocol_display(self):
+        toggle = X11SuperToggle(Mock())
+        toggle.display = Mock()
+        toggle.display.display = object()
+        event = Mock()
+        parser = Mock()
+        parser.parse_binary_value.return_value = (event, b"")
+        reply = Mock(category=1, client_swapped=False, data=b"event")
+
+        with (
+            patch("ai_bar.app.record.FromServer", 1),
+            patch("ai_bar.app.rq.EventField", return_value=parser),
+            patch.object(toggle, "_handle_event") as handle_event,
+        ):
+            toggle._handle_record_reply(reply)
+
+        parser.parse_binary_value.assert_called_once_with(
+            b"event", toggle.display.display, None, None
+        )
+        handle_event.assert_called_once_with(event)
+
     def test_tray_color_hint_uses_four_rgb_triplets(self):
         self.assertEqual(len(TRAY_BACKGROUND_RGB), 3)
         self.assertTrue(all(0 <= value <= 65535 for value in TRAY_BACKGROUND_RGB))

@@ -229,7 +229,9 @@ class X11SuperToggle:
 
         data = reply.data
         while data:
-            event, data = rq.EventField(None).parse_binary_value(data, self.display, None, None)
+            event, data = rq.EventField(None).parse_binary_value(
+                data, self.display.display, None, None
+            )
             self._handle_event(event)
 
     def _handle_event(self, event: Any) -> None:
