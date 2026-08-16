@@ -14,6 +14,8 @@ from gi.repository import Gdk, GdkPixbuf, Gtk, Vte
 from ai_bar.app import (
     AiBarWindow,
     WindowInfo,
+    X,
+    X11SuperToggle,
     clean_window_title,
     clock_labels_fit_inline,
     find_window_by_xid,
@@ -268,6 +270,29 @@ class ClockLayoutTests(unittest.TestCase):
         target = Window(20)
         self.assertIs(find_window_by_xid([Window(10), target], 20), target)
         self.assertIsNone(find_window_by_xid([Window(10)], 20))
+
+    def test_super_toggle_triggers_only_when_super_is_tapped_alone(self):
+        callback = Mock()
+        toggle = X11SuperToggle(callback)
+        toggle.keycodes = {133}
+
+        with patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn: fn()):
+            toggle._handle_event(Mock(type=X.KeyPress, detail=133))
+            toggle._handle_event(Mock(type=X.KeyRelease, detail=133))
+
+        callback.assert_called_once_with()
+
+    def test_super_toggle_ignores_super_combinations(self):
+        callback = Mock()
+        toggle = X11SuperToggle(callback)
+        toggle.keycodes = {133}
+
+        with patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn: fn()):
+            toggle._handle_event(Mock(type=X.KeyPress, detail=133))
+            toggle._handle_event(Mock(type=X.KeyPress, detail=23))
+            toggle._handle_event(Mock(type=X.KeyRelease, detail=133))
+
+        callback.assert_not_called()
 
     def test_tray_color_hint_uses_four_rgb_triplets(self):
         self.assertEqual(len(TRAY_BACKGROUND_RGB), 3)
