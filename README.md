@@ -1,58 +1,58 @@
 # AI-bar
 
-Pannello laterale GTK simile a una barra desktop: data/ora in alto, area tray/status con elenco finestre, due gruppi di launcher configurabili e terminale integrato nella parte bassa.
+A GTK side panel similar to a desktop bar, with the date and time at the top, a tray/status area with a window list, two configurable launcher groups, and an embedded terminal at the bottom.
 
-## Installazione
+## Installation
 
 ```bash
 ./install.sh
 ```
 
-Esegui lo script come utente normale, senza `sudo`: chiedera' i privilegi solo per installare i pacchetti di sistema e la sessione. L'installer:
+Run the script as a regular user, without `sudo`: it requests elevated privileges only to install the system packages and session. The installer:
 
-- installa le dipendenze su Debian, Ubuntu o Linux Mint
-- installa il comando `ai-bar` con `pipx`
-- crea `~/.config/ai-bar/config.json` se non esiste
-- installa la sessione `AI Bar Openbox` per il login manager
+- installs the dependencies on Debian, Ubuntu, or Linux Mint
+- installs the `ai-bar` command with `pipx`
+- creates `~/.config/ai-bar/config.json` if it does not exist
+- installs the `AI Bar Openbox` session for the login manager
 
-## Avvio
+## Usage
 
-Dopo l'installazione:
+After installation:
 
 ```bash
 ai-bar
 ai-bar --config ~/.config/ai-bar/config.json
 ```
 
-Per avviarlo direttamente dal checkout durante lo sviluppo:
+To run it directly from the checkout during development:
 
 ```bash
 python3 -m ai_bar --config config.example.json
 ```
 
-## Configurazione
+## Configuration
 
-Il file predefinito e' `~/.config/ai-bar/config.json`. Puoi partire da `config.example.json` e modificare:
+The default file is `~/.config/ai-bar/config.json`. You can start with `config.example.json` and customize:
 
-- `panel.side`: `left` oppure `right`
-- `panel.width`: larghezza del pannello, default `400`
-- `panel.resizable`: abilita il trascinamento del bordo laterale per cambiare larghezza
-- `tray.items`: elementi laterali tipo volume, Telegram o comandi personalizzati
-- `launcher_groups`: gruppi di pulsanti, icone e comandi
-- `launcher_groups[].buttons[].target`: usa `terminal` per eseguire il comando nel terminale integrato
-- `launcher_groups[].buttons[].maximized`: apre la finestra esterna massimizzata
-- `terminal.command`: shell/comando da aprire nel terminale integrato
-- `session_buttons`: pulsanti in basso per reload, logout, reboot e powerdown
+- `panel.side`: `left` or `right`
+- `panel.width`: panel width, default `400`
+- `panel.resizable`: enables dragging the side edge to change the width
+- `tray.items`: side items such as volume, Telegram, or custom commands
+- `launcher_groups`: groups of buttons, icons, and commands
+- `launcher_groups[].buttons[].target`: use `terminal` to run the command in the embedded terminal
+- `launcher_groups[].buttons[].maximized`: opens the external window maximized
+- `terminal.command`: shell or command to open in the embedded terminal
+- `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
-I launcher Ai-tools aprono una scheda terminale separata per ciascun comando. Tornando su un tool gia' aperto viene selezionata la sua scheda, il processo continua in background e il terminale riceve il focus. Nel terminale usa `Ctrl+Shift+C` e `Ctrl+Shift+V` per copia e incolla, oppure il menu del tasto destro.
+The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
 
-Il tray integrato supporta le icone XApp e, nelle sessioni X11, le icone XEmbed. Le applet condividono una griglia allineata a sinistra e vanno a capo singolarmente quando non entrano in larghezza. Su Wayland e per alcune app AppIndicator/StatusNotifier moderne, gli elementi possono non comparire nel pannello; in quel caso resta disponibile la riga `tray.items` configurabile. Su X11 il tasto Super nasconde o mostra il pannello con slide laterale.
+The embedded tray supports XApp icons and, in X11 sessions, XEmbed icons. Applets share a left-aligned grid and wrap individually when they do not fit within the available width. On Wayland and with some modern AppIndicator/StatusNotifier applications, items may not appear in the panel; in that case, the configurable `tray.items` row remains available. On X11, the Super key hides or shows the panel with a sliding animation.
 
-## Sessione LightDM/Openbox
+## LightDM/Openbox session
 
-La sessione viene installata da `install.sh`. Esci dalla sessione grafica, scegli `AI Bar Openbox` nel selettore di LightDM ed entra. Il launcher cerca il comando installato da `pipx` e usa `~/.config/ai-bar/config.json` senza dipendere dal checkout del repository.
+The session is installed by `install.sh`. Log out of the graphical session, select `AI Bar Openbox` in the LightDM session chooser, and log in. The launcher finds the command installed by `pipx` and uses `~/.config/ai-bar/config.json` without depending on the repository checkout.
 
-## Verifica
+## Verification
 
 ```bash
 python3 -m unittest discover -s tests
