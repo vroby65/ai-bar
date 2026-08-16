@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -29,10 +30,14 @@ except Exception:  # pragma: no cover - exercised only on systems without Wnck.
 
 try:
     from Xlib import X, XK, display as xlib_display
+    from Xlib.ext import record
+    from Xlib.protocol import rq
 except Exception:  # pragma: no cover - exercised only on systems without python-xlib.
     X = None
     XK = None
     xlib_display = None
+    record = None
+    rq = None
 
 from .config import ConfigError, default_config, load_config
 from .xapp_tray import XAppStatusIconHost
@@ -138,28 +143,48 @@ class X11SuperToggle:
     def __init__(self, callback: Callable[[], None]) -> None:
         self.callback = callback
         self.display: Any = None
-        self.root: Any = None
         self.keycodes: set[int] = set()
-        self.poll_id: int | None = None
+        self.context: Any = None
+        self.thread: threading.Thread | None = None
+        self.super_keys_down: set[int] = set()
+        self.super_interrupted = False
 
     def start(self) -> bool:
-        if X is None or XK is None or xlib_display is None:
+        if X is None or XK is None or xlib_display is None or record is None or rq is None:
             print("ai-bar: python-xlib non disponibile, toggle Super disattivato.", file=sys.stderr)
             return False
 
         try:
             self.display = xlib_display.Display()
-            self.root = self.display.screen().root
             for key_name in ("Super_L", "Super_R"):
                 keycode = self.display.keysym_to_keycode(XK.string_to_keysym(key_name))
                 if keycode:
-                    self.root.grab_key(keycode, X.AnyModifier, True, X.GrabModeAsync, X.GrabModeAsync)
                     self.keycodes.add(int(keycode))
 
-            self.display.sync()
             if not self.keycodes:
+                self.display.close()
+                self.display = None
                 return False
-            self.poll_id = GLib.timeout_add(50, self._poll_events)
+
+            self.context = self.display.record_create_context(
+                0,
+                [record.AllClients],
+                [
+                    {
+                        "core_requests": (0, 0),
+                        "core_replies": (0, 0),
+                        "ext_requests": (0, 0, 0, 0),
+                        "ext_replies": (0, 0, 0, 0),
+                        "delivered_events": (0, 0),
+                        "device_events": (X.KeyPress, X.KeyRelease),
+                        "errors": (0, 0),
+                        "client_started": False,
+                        "client_died": False,
+                    }
+                ],
+            )
+            self.thread = threading.Thread(target=self._run, daemon=True)
+            self.thread.start()
             return True
         except Exception as exc:
             print(f"ai-bar: toggle Super disattivato: {exc}", file=sys.stderr)
@@ -167,32 +192,69 @@ class X11SuperToggle:
             return False
 
     def stop(self) -> None:
-        if self.poll_id is not None:
-            GLib.source_remove(self.poll_id)
-            self.poll_id = None
-
-        if self.display is not None and self.root is not None:
-            for keycode in self.keycodes:
-                try:
-                    self.root.ungrab_key(keycode, X.AnyModifier)
-                except Exception:
-                    pass
+        if self.display is not None and self.context is not None:
             try:
-                self.display.flush()
+                self.display.record_disable_context(self.context)
             except Exception:
                 pass
 
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join(timeout=1)
+        self.thread = None
+
         self.keycodes.clear()
+        self.super_keys_down.clear()
+        self.super_interrupted = False
+        self.context = None
+        self.display = None
 
-    def _poll_events(self) -> bool:
-        if self.display is None:
-            return False
+    def _run(self) -> None:
+        try:
+            if self.display is not None and self.context is not None:
+                self.display.record_enable_context(self.context, self._handle_record_reply)
+        finally:
+            if self.display is not None and self.context is not None:
+                try:
+                    self.display.record_free_context(self.context)
+                except Exception:
+                    pass
+            try:
+                self.display.close()
+            except Exception:
+                pass
 
-        while self.display.pending_events():
-            event = self.display.next_event()
-            if event.type == X.KeyPress and int(event.detail) in self.keycodes:
-                self.callback()
-        return True
+    def _handle_record_reply(self, reply: Any) -> None:
+        if reply.category != record.FromServer or reply.client_swapped:
+            return
+
+        data = reply.data
+        while data:
+            event, data = rq.EventField(None).parse_binary_value(
+                data, self.display.display, None, None
+            )
+            self._handle_event(event)
+
+    def _handle_event(self, event: Any) -> None:
+        keycode = int(event.detail)
+        if keycode in self.keycodes:
+            if event.type == X.KeyPress:
+                self.super_keys_down.add(keycode)
+                return
+
+            if event.type == X.KeyRelease:
+                if len(self.super_keys_down) == 1 and not self.super_interrupted:
+                    GLib.idle_add(self._emit_callback)
+                self.super_keys_down.discard(keycode)
+                if not self.super_keys_down:
+                    self.super_interrupted = False
+                return
+
+        if event.type == X.KeyPress and self.super_keys_down:
+            self.super_interrupted = True
+
+    def _emit_callback(self) -> bool:
+        self.callback()
+        return False
 
 
 CSS = """
