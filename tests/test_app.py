@@ -20,6 +20,7 @@ from ai_bar.app import (
     clock_labels_fit_inline,
     find_window_by_xid,
     maximize_launched_window,
+    panel_animation_step,
     panel_x_for_state,
     set_system_muted,
     set_system_volume,
@@ -363,6 +364,23 @@ class ClockLayoutTests(unittest.TestCase):
         run_command.assert_called_once_with(
             ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"]
         )
+
+    def test_animation_step_never_overshoots_the_target(self):
+        for distance in range(-40, 41):
+            self.assertLessEqual(panel_animation_step(distance), abs(distance))
+
+    def test_animation_reaches_the_target_for_every_panel_width(self):
+        for width in range(120, 1400):
+            for start, target in ((-width, 0), (0, -width)):
+                position = start
+                for _step in range(500):
+                    distance = target - position
+                    if abs(distance) <= 3:
+                        break
+                    step = panel_animation_step(distance)
+                    position += step if distance > 0 else -step
+                else:
+                    self.fail(f"animation did not converge for panel width {width}")
 
 
 if __name__ == "__main__":

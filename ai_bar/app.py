@@ -84,6 +84,13 @@ def panel_x_for_state(side: str, screen_x: int, screen_width: int, panel_width: 
     return screen_x - panel_width if hidden else screen_x
 
 
+def panel_animation_step(distance: int) -> int:
+    # Clamping to the remaining distance is what keeps the animation from
+    # oscillating: without it the minimum step overshoots the target whenever
+    # less than PANEL_ANIMATION_MIN_STEP is left to travel.
+    return min(abs(distance), max(PANEL_ANIMATION_MIN_STEP, abs(distance) // 3))
+
+
 def clean_window_title(title: str) -> str:
     return " ".join(title.split()) or "Finestra"
 
@@ -1238,7 +1245,7 @@ class AiBarWindow(Gtk.Window):
                 GLib.idle_add(self._focus_terminal)
             return False
 
-        step = max(PANEL_ANIMATION_MIN_STEP, abs(distance) // 3)
+        step = panel_animation_step(distance)
         self.move(current_x + (step if distance > 0 else -step), geometry.y)
         return True
 
