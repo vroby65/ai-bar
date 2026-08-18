@@ -64,6 +64,25 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "Configurazione creata: $CONFIG_FILE"
 fi
 
+echo "Installazione del tema openbox Aura Midnight..."
+mkdir -p "$HOME/.themes"
+cp -r "$PROJECT_DIR/packaging/themes/Aura Midnight" "$HOME/.themes/"
+
+if [ ! -f "$HOME/.config/openbox/rc.xml" ]; then
+    mkdir -p "$HOME/.config/openbox"
+    cat > "$HOME/.config/openbox/rc.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <theme>
+    <name>Aura Midnight</name>
+    <titleLayout>NLIMC</titleLayout>
+    <keepBorder>yes</keepBorder>
+  </theme>
+</openbox_config>
+EOF
+    echo "Configurazione openbox creata con il tema Aura Midnight: $HOME/.config/openbox/rc.xml"
+fi
+
 echo "Installazione della sessione AI Bar Openbox..."
 sudo install -Dm755 \
     "$PROJECT_DIR/scripts/ai-bar-openbox-session" \

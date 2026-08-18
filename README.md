@@ -13,6 +13,7 @@ Run the script as a regular user, without `sudo`: it requests elevated privilege
 - installs the dependencies on Debian, Ubuntu, or Linux Mint
 - installs the `ai-bar` command with `pipx`
 - creates `~/.config/ai-bar/config.json` if it does not exist
+- installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
 - installs the `AI Bar Openbox` session for the login manager
 
 ## Usage
@@ -50,7 +51,7 @@ The embedded tray supports XApp icons and, in X11 sessions, XEmbed icons. Applet
 
 ## LightDM/Openbox session
 
-The session is installed by `install.sh`. Log out of the graphical session, select `AI Bar Openbox` in the LightDM session chooser, and log in. The launcher finds the command installed by `pipx` and uses `~/.config/ai-bar/config.json` without depending on the repository checkout.
+The session is installed by `install.sh`. Log out of the graphical session, select `AI Bar Openbox` in the LightDM session chooser, and log in. The launcher finds the command installed by `pipx` and uses `~/.config/ai-bar/config.json` without depending on the repository checkout. Window decorations use the bundled `Aura Midnight` Openbox theme, copied to `~/.themes` by the installer; an existing `~/.config/openbox/rc.xml` is left untouched.
 
 ## Verification
 
