@@ -70,7 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             ],
         },
         {
-            "title": "Ai-tools",
+            "title": "tools",
             "columns": 4,
             "buttons": [
                 {
