@@ -22,6 +22,20 @@
         "label": "Volume",
         "icon": "audio-volume-high-symbolic",
         "command": ["pavucontrol", "-t", "2"]
+      },
+      {
+        "type": "display",
+        "label": "Display",
+        "icon": "preferences-desktop-display-symbolic",
+        "command": ["arandr"],
+        "icon_only": true
+      },
+      {
+        "type": "screenshot",
+        "label": "Screenshot",
+        "icon": "camera-photo-symbolic",
+        "command": ["scrot", "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png"],
+        "icon_only": true
       }
     ]
   },
@@ -83,6 +97,18 @@
           "icon": "utilities-terminal-symbolic",
           "command": ["fish"],
           "target": "terminal"
+        },
+        {
+          "label": "Caja",
+          "icon": "system-file-manager-symbolic",
+          "command": ["caja"],
+          "target": "window"
+        },
+        {
+          "label": "Chat",
+          "icon": "web-browser-symbolic",
+          "url": "https://example.com",
+          "target": "url"
         }
       ]
     }

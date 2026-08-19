@@ -71,6 +71,30 @@ class ClockLayoutTests(unittest.TestCase):
         window._launch.assert_called_once_with(["firefox"], maximized=True)
         button.destroy()
 
+    def test_window_launcher_uses_embedded_window_switch(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._switch_embedded_window = Mock()
+        button = window._build_launcher_button(
+            {"label": "Caja", "command": ["caja"], "target": "window"}
+        )
+
+        button.emit("clicked")
+
+        window._switch_embedded_window.assert_called_once_with(["caja"], "Caja")
+        button.destroy()
+
+    def test_url_launcher_uses_webview_switch(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._switch_webview = Mock()
+        button = window._build_launcher_button(
+            {"label": "Chat", "url": "https://example.com", "target": "url"}
+        )
+
+        button.emit("clicked")
+
+        window._switch_webview.assert_called_once_with("https://example.com", "Chat")
+        button.destroy()
+
     def test_maximize_launched_window_ignores_windows_present_before_launch(self):
         class Window:
             def __init__(self, xid):
@@ -129,6 +153,44 @@ class ClockLayoutTests(unittest.TestCase):
         xembed_host.assert_called_once_with(tray_flow, 24)
 
         status_area.destroy()
+
+    def test_status_button_icon_only_omits_the_label(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.status_labels = []
+
+        button = window._build_status_button(
+            {
+                "type": "display",
+                "label": "Display",
+                "icon": "preferences-desktop-display-symbolic",
+                "command": ["arandr"],
+                "icon_only": True,
+            }
+        )
+
+        children = button.get_child().get_children()
+        self.assertEqual(len(children), 1)
+        self.assertIsInstance(children[0], Gtk.Image)
+        button.destroy()
+
+    def test_status_button_without_icon_only_shows_icon_and_label(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.status_labels = []
+
+        button = window._build_status_button(
+            {
+                "type": "display",
+                "label": "Display",
+                "icon": "preferences-desktop-display-symbolic",
+                "command": ["arandr"],
+            }
+        )
+
+        children = button.get_child().get_children()
+        self.assertEqual(len(children), 2)
+        self.assertIsInstance(children[0], Gtk.Image)
+        self.assertIsInstance(children[1], Gtk.Label)
+        button.destroy()
 
     def test_clock_labels_fit_inline_when_width_allows_it(self):
         self.assertTrue(clock_labels_fit_inline(120, 50, 60, 10))
