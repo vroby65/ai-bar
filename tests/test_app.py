@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import gi
@@ -20,7 +21,9 @@ from ai_bar.app import (
     clock_labels_fit_inline,
     find_window_by_xid,
     maximize_launched_window,
+    centered_position,
     panel_animation_step,
+    place_window,
     panel_x_for_state,
     set_system_muted,
     set_system_volume,
@@ -364,6 +367,117 @@ class ClockLayoutTests(unittest.TestCase):
         run_command.assert_called_once_with(
             ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"]
         )
+
+    def _fake_window(self):
+        class Window:
+            def __init__(self):
+                self.calls = []
+
+            def get_geometry(self):
+                return (0, 0, 800, 600)
+
+            def unmaximize(self):
+                self.calls.append("unmaximize")
+
+            def set_geometry(self, gravity, mask, x, y, width, height):
+                self.calls.append(("set_geometry", x, y))
+
+            def maximize(self):
+                self.calls.append("maximize")
+
+        return Window()
+
+    def _monitor(self, x, y, width, height):
+        area = SimpleNamespace(x=x, y=y, width=width, height=height)
+        return SimpleNamespace(get_workarea=lambda: area,
+                               get_geometry=lambda: area)
+
+    def _window_with_monitors(self, launch_monitor, panel_monitor=None):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {"panel": {"monitor": panel_monitor,
+                                   "launch_monitor": launch_monitor}}
+        window.launch_monitor_warning_shown = False
+        window.monitor_warning_shown = False
+        primary = self._monitor(0, 240, 2560, 1403)
+        secondary = self._monitor(2560, 0, 1050, 1680)
+        window._primary_monitor = lambda: primary
+        window._find_monitor = lambda wanted: {"DVI-D-0": primary,
+                                               "DP-1": secondary}.get(wanted)
+        window._resolve_monitor = lambda: (
+            secondary if panel_monitor == "DP-1" else primary)
+        return window
+
+    def test_launch_area_is_off_by_default(self):
+        # Unset means the window manager keeps deciding, so existing setups
+        # are not silently changed by an upgrade.
+        self.assertIsNone(self._window_with_monitors(None).\
+                          _launch_area())
+
+    def test_launch_area_auto_targets_the_primary_monitor(self):
+        window = self._window_with_monitors("auto", panel_monitor="DP-1")
+
+        area = window._launch_area()
+
+        self.assertEqual((area.x, area.y), (0, 240))
+
+    def test_launch_area_auto_does_nothing_when_the_panel_is_already_there(self):
+        # Panel on the primary: moving windows to the primary would be pointless.
+        window = self._window_with_monitors("auto")
+
+        self.assertIsNone(window._launch_area())
+
+    def test_launch_area_accepts_an_explicit_connector(self):
+        window = self._window_with_monitors("DVI-D-0", panel_monitor="DP-1")
+
+        area = window._launch_area()
+
+        self.assertEqual((area.x, area.y), (0, 240))
+
+    def test_launch_area_ignores_a_monitor_that_is_not_there(self):
+        window = self._window_with_monitors("HDMI-9", panel_monitor="DP-1")
+
+        self.assertIsNone(window._launch_area())
+
+    def test_centered_position_centers_inside_the_area(self):
+        area = SimpleNamespace(x=2560, y=0, width=1050, height=1680)
+
+        self.assertEqual(centered_position(area, 800, 600), (2685, 540))
+
+    def test_centered_position_keeps_oversized_windows_on_screen(self):
+        area = SimpleNamespace(x=2560, y=0, width=1050, height=1680)
+
+        self.assertEqual(centered_position(area, 2000, 2000), (2560, 0))
+
+    def test_place_window_moves_before_maximizing(self):
+        # Order matters: the window manager maximizes onto the monitor the
+        # window sits on, so maximizing first would expand it on the wrong one.
+        window = self._fake_window()
+
+        with patch("ai_bar.app.Wnck", SimpleNamespace(
+                WindowGravity=SimpleNamespace(CURRENT=0),
+                WindowMoveResizeMask=SimpleNamespace(X=1, Y=2))):
+            place_window(window, SimpleNamespace(x=0, y=240, width=2560, height=1403), True)
+
+        self.assertEqual(window.calls,
+                         ["unmaximize", ("set_geometry", 0, 240), "maximize"])
+
+    def test_place_window_centers_when_not_maximizing(self):
+        window = self._fake_window()
+
+        with patch("ai_bar.app.Wnck", SimpleNamespace(
+                WindowGravity=SimpleNamespace(CURRENT=0),
+                WindowMoveResizeMask=SimpleNamespace(X=1, Y=2))):
+            place_window(window, SimpleNamespace(x=0, y=240, width=2560, height=1403), False)
+
+        self.assertNotIn("maximize", window.calls)
+        self.assertIn(("set_geometry", 880, 641), window.calls)
+
+    def test_place_window_without_an_area_only_maximizes(self):
+        window = self._fake_window()
+
+        place_window(window, None, True)
+
+        self.assertEqual(window.calls, ["maximize"])
 
     def test_animation_step_never_overshoots_the_target(self):
         for distance in range(-40, 41):
