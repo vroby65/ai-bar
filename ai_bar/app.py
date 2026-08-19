@@ -60,6 +60,7 @@ LAUNCH_MAXIMIZE_INTERVAL_MS = 100
 LAUNCH_MAXIMIZE_ATTEMPTS = 50
 EMBED_POLL_INTERVAL_MS = 150
 EMBED_POLL_ATTEMPTS = 60
+WEBVIEW_ZOOM_STEP = 0.1
 TERMINAL_FOREGROUND = "#f2f2ee"
 TERMINAL_BACKGROUND = "#151819"
 TERMINAL_PALETTE = (
@@ -102,6 +103,13 @@ def terminal_tab_label(command: str | list[str] | None) -> str:
     first = shlex.split(command)[0] if isinstance(command, str) else command[0]
     name = Path(first).name
     return {"ds-code": "DS Code"}.get(name, name.capitalize())
+
+
+def webkit_cookie_storage_path() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME")
+    if data_home:
+        return Path(data_home) / "ai-bar" / "webkit" / "cookies.sqlite"
+    return Path.home() / ".local" / "share" / "ai-bar" / "webkit" / "cookies.sqlite"
 
 
 def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
@@ -401,6 +409,7 @@ class AiBarWindow(Gtk.Window):
         super().__init__(title="ai-bar")
         self.config = config
         self.config_path = config_path
+        self.web_context: Any | None = None
         self.tray_host: XEmbedTrayHost | None = None
         self.xapp_tray_host: XAppStatusIconHost | None = None
         self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
@@ -426,6 +435,8 @@ class AiBarWindow(Gtk.Window):
         self.panel_geometry_applied = False
         self.resize_drag: tuple[int, float] | None = None
 
+        self._configure_webkit_cookie_persistence()
+
         panel = self.config["panel"]
         self.set_name("ai-bar")
         self.set_decorated(bool(panel.get("decorated", False)))
@@ -443,6 +454,19 @@ class AiBarWindow(Gtk.Window):
         self._install_css()
         self.add(self._build_content())
         self.show_all()
+
+    def _configure_webkit_cookie_persistence(self) -> None:
+        if WebKit2 is None:
+            return
+
+        self.web_context = WebKit2.WebContext.get_default()
+        cookie_manager = self.web_context.get_website_data_manager().get_cookie_manager()
+        cookie_path = webkit_cookie_storage_path()
+        cookie_path.parent.mkdir(parents=True, exist_ok=True)
+        cookie_manager.set_persistent_storage(
+            str(cookie_path),
+            WebKit2.CookiePersistentStorage.SQLITE,
+        )
 
     def _build_content(self) -> Gtk.Widget:
         root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -663,21 +687,28 @@ class AiBarWindow(Gtk.Window):
             label.get_style_context().add_class("section-title")
             box.pack_start(label, False, False, 0)
 
-        columns = max(1, int(group.get("columns", 1)))
-        grid = Gtk.Grid(column_spacing=6, row_spacing=6)
-        grid.set_column_homogeneous(True)
+        buttons = list(group.get("buttons", []))
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_column_spacing(6)
+        flow.set_row_spacing(6)
+        flow.set_homogeneous(True)
+        flow.set_min_children_per_line(1)
+        flow.set_max_children_per_line(max(1, len(buttons)))
 
-        for index, button_config in enumerate(group.get("buttons", [])):
+        for button_config in buttons:
             button = self._build_launcher_button(button_config)
-            grid.attach(button, index % columns, index // columns, 1, 1)
+            self._add_flow_child(flow, button)
 
-        box.pack_start(grid, False, False, 0)
+        box.pack_start(flow, False, False, 0)
         return box
 
     def _build_launcher_button(self, button_config: dict[str, Any]) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("launcher-button")
         button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_hexpand(True)
+        button.set_halign(Gtk.Align.FILL)
         button.set_tooltip_text(str(button_config.get("label", "")))
         target = button_config.get("target")
         if target == "terminal":
@@ -716,6 +747,7 @@ class AiBarWindow(Gtk.Window):
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         inner.set_halign(Gtk.Align.CENTER)
         inner.set_valign(Gtk.Align.CENTER)
+        inner.set_hexpand(True)
 
         icon_name = button_config.get("icon")
         if icon_name:
@@ -905,6 +937,23 @@ class AiBarWindow(Gtk.Window):
             terminal.paste_clipboard()
             return True
         return False
+
+    def _on_webview_key_press(self, webview: Any, event: Gdk.EventKey) -> bool:
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        if not ctrl:
+            return False
+
+        if event.keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
+            self._change_webview_zoom(webview, WEBVIEW_ZOOM_STEP)
+            return True
+        if event.keyval in (Gdk.KEY_minus, Gdk.KEY_KP_Subtract):
+            self._change_webview_zoom(webview, -WEBVIEW_ZOOM_STEP)
+            return True
+        return False
+
+    def _change_webview_zoom(self, webview: Any, delta: float) -> None:
+        current_zoom = float(webview.get_zoom_level())
+        webview.set_zoom_level(max(0.25, min(3.0, current_zoom + delta)))
 
     def _build_terminal_menu(self, terminal: Vte.Terminal) -> Gtk.Menu:
         menu = Gtk.Menu()
@@ -1265,9 +1314,10 @@ class AiBarWindow(Gtk.Window):
         key = "url:" + url
         widget = self.embedded.get(key)
         if widget is None:
-            webview = WebKit2.WebView()
+            webview = WebKit2.WebView.new_with_context(self.web_context or WebKit2.WebContext.get_default())
             webview.set_hexpand(True)
             webview.set_vexpand(True)
+            webview.connect("key-press-event", self._on_webview_key_press)
             webview.load_uri(url)
             widget = webview
             self.embedded[key] = webview
