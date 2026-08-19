@@ -1487,6 +1487,31 @@ class AiBarWindow(Gtk.Window):
         display = Gdk.Display.get_default()
         if isinstance(wanted, int) and not isinstance(wanted, bool):
             return display.get_monitor(wanted)
+
+        if isinstance(wanted, str):
+            xrandr_output = run_text_command(["xrandr", "--query"])
+            if xrandr_output:
+                match = re.search(
+                    rf"^({re.escape(wanted)})\s+connected(?:\s+primary)?\s+"
+                    r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)\b",
+                    xrandr_output,
+                    re.MULTILINE,
+                )
+                if match is not None:
+                    expected = tuple(int(value) for value in match.groups()[1:])
+                    for index in range(display.get_n_monitors()):
+                        monitor = display.get_monitor(index)
+                        if monitor is None:
+                            continue
+                        geometry = monitor.get_geometry()
+                        if (
+                            geometry.width,
+                            geometry.height,
+                            geometry.x,
+                            geometry.y,
+                        ) == expected:
+                            return monitor
+
         for index in range(display.get_n_monitors()):
             monitor = display.get_monitor(index)
             if monitor is not None and monitor.get_model() == str(wanted):
@@ -1554,10 +1579,33 @@ class AiBarWindow(Gtk.Window):
             return
 
         geometry = self._monitor_geometry()
+        display = Gdk.Display.get_default()
+        if display is None:
+            return
+
+        screen_start = None
+        screen_end = None
+        for index in range(display.get_n_monitors()):
+            monitor = display.get_monitor(index)
+            if monitor is None:
+                continue
+            monitor_geometry = monitor.get_geometry()
+            if screen_start is None or monitor_geometry.x < screen_start:
+                screen_start = monitor_geometry.x
+            monitor_end = monitor_geometry.x + monitor_geometry.width
+            if screen_end is None or monitor_end > screen_end:
+                screen_end = monitor_end
+
         start_y = geometry.y
         end_y = geometry.y + geometry.height - 1
         side = self.config["panel"].get("side", "left")
         width = self.panel_width
+        if side == "left" and screen_start is not None and geometry.x > screen_start:
+            self._clear_strut()
+            return
+        if side == "right" and screen_end is not None and geometry.x + geometry.width < screen_end:
+            self._clear_strut()
+            return
 
         if side == "left":
             values = [width, 0, 0, 0, start_y, end_y, 0, 0, 0, 0, 0, 0]

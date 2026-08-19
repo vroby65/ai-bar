@@ -576,6 +576,64 @@ class ClockLayoutTests(unittest.TestCase):
 
         self.assertEqual(panel_vertical_span(monitor, "screen"), (0, 1080))
 
+    def _display(self, *monitors):
+        return SimpleNamespace(
+            get_n_monitors=lambda: len(monitors),
+            get_monitor=lambda index: monitors[index],
+        )
+
+    def test_apply_strut_clears_space_for_a_right_panel_not_on_the_screen_edge(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {"panel": {"side": "right", "reserve_space": True}}
+        window.panel_hidden = False
+        window.panel_width = 400
+        window._monitor_geometry = lambda: SimpleNamespace(
+            x=0, y=0, width=1920, height=1080
+        )
+        window._clear_strut = Mock()
+        window._set_strut_values = Mock()
+        left = self._display(
+            SimpleNamespace(
+                get_geometry=lambda: SimpleNamespace(x=0, y=0, width=1920, height=1080)
+            ),
+            SimpleNamespace(
+                get_geometry=lambda: SimpleNamespace(x=1920, y=0, width=1080, height=1920)
+            ),
+        )
+
+        with patch("ai_bar.app.Gdk.Display.get_default", return_value=left):
+            window._apply_strut()
+
+        window._clear_strut.assert_called_once()
+        window._set_strut_values.assert_not_called()
+
+    def test_apply_strut_keeps_space_for_a_right_panel_on_the_screen_edge(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {"panel": {"side": "right", "reserve_space": True}}
+        window.panel_hidden = False
+        window.panel_width = 400
+        window._monitor_geometry = lambda: SimpleNamespace(
+            x=1920, y=0, width=1080, height=1920
+        )
+        window._clear_strut = Mock()
+        window._set_strut_values = Mock()
+        display = self._display(
+            SimpleNamespace(
+                get_geometry=lambda: SimpleNamespace(x=0, y=0, width=1920, height=1080)
+            ),
+            SimpleNamespace(
+                get_geometry=lambda: SimpleNamespace(x=1920, y=0, width=1080, height=1920)
+            ),
+        )
+
+        with patch("ai_bar.app.Gdk.Display.get_default", return_value=display):
+            window._apply_strut()
+
+        window._clear_strut.assert_not_called()
+        window._set_strut_values.assert_called_once_with(
+            [0, 400, 0, 0, 0, 0, 0, 1919, 0, 0, 0, 0]
+        )
+
     def _fake_window(self):
         class Window:
             def __init__(self):
@@ -614,6 +672,26 @@ class ClockLayoutTests(unittest.TestCase):
         window._resolve_monitor = lambda: (
             secondary if panel_monitor == "DP-1" else primary)
         return window
+
+    def test_find_monitor_matches_connector_names_from_xrandr(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        primary = self._monitor(0, 240, 2560, 1403)
+        secondary = self._monitor(2560, 0, 1050, 1680)
+        display = SimpleNamespace(
+            get_n_monitors=lambda: 2,
+            get_monitor=lambda index: (primary, secondary)[index],
+        )
+        xrandr_output = (
+            "Screen 0: minimum 320 x 200, current 3610 x 1680, maximum 16384 x 16384\n"
+            "DVI-D-0 connected primary 2560x1403+0+240 (normal left inverted right x axis y axis) 0mm x 0mm\n"
+            "DP-1 connected 1050x1680+2560+0 (normal left inverted right x axis y axis) 0mm x 0mm\n"
+        )
+
+        with patch("ai_bar.app.Gdk.Display.get_default", return_value=display), patch(
+            "ai_bar.app.run_text_command",
+            return_value=xrandr_output,
+        ):
+            self.assertIs(window._find_monitor("DP-1"), secondary)
 
     def test_launch_area_is_off_by_default(self):
         # Unset means the window manager keeps deciding, so existing setups
