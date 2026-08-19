@@ -422,6 +422,7 @@ class AiBarWindow(Gtk.Window):
         self.panel_hidden = False
         self.panel_animation_id: int | None = None
         self.panel_geometry_applied = False
+        self.monitor_warning_shown = False
         self.resize_drag: tuple[int, float] | None = None
 
         panel = self.config["panel"]
@@ -1191,8 +1192,11 @@ class AiBarWindow(Gtk.Window):
 
     def _apply_panel_geometry(self) -> None:
         panel = self.config["panel"]
-        width = self.panel_width
         geometry = self._monitor_geometry()
+        # A configured width wider than the chosen monitor would throw off the
+        # right-hand placement, so it is capped at the monitor itself.
+        self.panel_width = min(self.panel_width, geometry.width)
+        width = self.panel_width
         height_config = panel.get("height", "screen")
         height = geometry.height if height_config == "screen" else int(height_config)
         side = panel.get("side", "left")
@@ -1249,10 +1253,40 @@ class AiBarWindow(Gtk.Window):
         self.move(current_x + (step if distance > 0 else -step), geometry.y)
         return True
 
-    def _monitor_geometry(self) -> Gdk.Rectangle:
+    def _find_monitor(self, wanted: Any) -> Any | None:
+        # A monitor is named either by index or by connector name, the same
+        # string xrandr prints, for example "DP-1". None when it matches
+        # nothing, so callers can fall back instead of crashing at startup.
         display = Gdk.Display.get_default()
-        monitor = display.get_primary_monitor() or display.get_monitor(0)
-        return monitor.get_geometry()
+        if isinstance(wanted, int) and not isinstance(wanted, bool):
+            return display.get_monitor(wanted)
+        for index in range(display.get_n_monitors()):
+            monitor = display.get_monitor(index)
+            if monitor is not None and monitor.get_model() == str(wanted):
+                return monitor
+        return None
+
+    def _primary_monitor(self) -> Any:
+        display = Gdk.Display.get_default()
+        return display.get_primary_monitor() or display.get_monitor(0)
+
+    def _resolve_monitor(self) -> Any:
+        wanted = self.config.get("panel", {}).get("monitor")
+        if wanted is None:
+            return self._primary_monitor()
+
+        monitor = self._find_monitor(wanted)
+        if monitor is not None:
+            return monitor
+
+        if not self.monitor_warning_shown:
+            self.monitor_warning_shown = True
+            print(f"ai-bar: monitor {wanted!r} non trovato, uso il primario.",
+                  file=sys.stderr)
+        return self._primary_monitor()
+
+    def _monitor_geometry(self) -> Gdk.Rectangle:
+        return self._resolve_monitor().get_geometry()
 
     def _apply_strut(self) -> None:
         if self.panel_hidden or not self.config.get("panel", {}).get("reserve_space", True):

@@ -38,6 +38,7 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `panel.side`: `left` or `right`
 - `panel.width`: panel width, default `400`
 - `panel.resizable`: enables dragging the side edge to change the width
+- `panel.monitor`: which monitor holds the panel, by index or connector name such as `DP-1`; unset uses the primary one
 - `tray.items`: side items such as volume, Telegram, or custom commands
 - `launcher_groups`: groups of buttons, icons, and commands
 - `launcher_groups[].buttons[].target`: use `terminal` to run the command in the embedded terminal

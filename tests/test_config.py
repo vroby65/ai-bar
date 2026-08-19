@@ -3,7 +3,27 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ai_bar.config import ConfigError, default_config, load_config, merge_config
+from ai_bar.config import ConfigError, default_config, load_config, merge_config, validate_config
+
+
+class MonitorConfigTests(unittest.TestCase):
+    def _config(self, **panel):
+        config = default_config()
+        config["panel"].update(panel)
+        return config
+
+    def test_monitor_defaults_to_unset(self):
+        self.assertIsNone(default_config()["panel"]["monitor"])
+
+    def test_monitor_accepts_an_index_or_a_connector_name(self):
+        validate_config(self._config(monitor=1))
+        validate_config(self._config(monitor="DP-1"))
+
+    def test_monitor_rejects_nonsense(self):
+        for value in (-1, True, "", "   ", 1.5, []):
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigError):
+                    validate_config(self._config(monitor=value))
 
 
 class ConfigTests(unittest.TestCase):
