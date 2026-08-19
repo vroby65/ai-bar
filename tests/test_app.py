@@ -23,6 +23,7 @@ from ai_bar.app import (
     maximize_launched_window,
     centered_position,
     panel_animation_step,
+    panel_vertical_span,
     place_window,
     panel_x_for_state,
     set_system_muted,
@@ -367,6 +368,60 @@ class ClockLayoutTests(unittest.TestCase):
         run_command.assert_called_once_with(
             ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"]
         )
+
+    def _panel_window(self, side):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {"panel": {"side": side, "height": "screen"}}
+        window.panel_width = 300
+        window.panel_hidden = False
+        # 2560x1440 monitor with a 37 pixel panel at the bottom and a taskbar
+        # on the right, so work area and geometry differ on both axes.
+        window._monitor_geometry = lambda: SimpleNamespace(
+            x=0, y=240, width=2560, height=1440)
+        window._monitor_workarea = lambda: SimpleNamespace(
+            x=0, y=240, width=2523, height=1403)
+        window.set_default_size = Mock()
+        window.resize = Mock()
+        window.move = Mock()
+        return window
+
+    def test_panel_geometry_stops_at_the_work_area(self):
+        window = self._panel_window("left")
+
+        window._apply_panel_geometry()
+
+        window.resize.assert_called_once_with(300, 1403)
+        window.move.assert_called_once_with(0, 240)
+
+    def test_panel_geometry_still_spans_the_full_monitor_width(self):
+        # The horizontal placement must keep using the monitor geometry: the
+        # work area width already excludes the strut the panel reserves, so
+        # a right-hand panel would creep inwards on every reapply.
+        window = self._panel_window("right")
+
+        window._apply_panel_geometry()
+
+        window.move.assert_called_once_with(2260, 240)
+
+    def test_panel_span_stops_at_a_reserved_bottom_panel(self):
+        # A desktop panel at the bottom shrinks the work area: 1440 pixels of
+        # monitor, 37 reserved, so the panel gets 1403 and must not cover them.
+        workarea = SimpleNamespace(x=0, y=240, width=2560, height=1403)
+
+        self.assertEqual(panel_vertical_span(workarea, "screen"), (240, 1403))
+
+    def test_panel_span_honours_an_explicit_height(self):
+        workarea = SimpleNamespace(x=0, y=240, width=2560, height=1403)
+
+        self.assertEqual(panel_vertical_span(workarea, 900), (240, 900))
+        self.assertEqual(panel_vertical_span(workarea, "900"), (240, 900))
+
+    def test_panel_span_uses_the_full_monitor_when_nothing_is_reserved(self):
+        # With no dock or panel around, the work area equals the monitor, so
+        # behaviour is unchanged for a bare window manager.
+        monitor = SimpleNamespace(x=0, y=0, width=1920, height=1080)
+
+        self.assertEqual(panel_vertical_span(monitor, "screen"), (0, 1080))
 
     def _fake_window(self):
         class Window:

@@ -84,6 +84,14 @@ def panel_x_for_state(side: str, screen_x: int, screen_width: int, panel_width: 
     return screen_x - panel_width if hidden else screen_x
 
 
+def panel_vertical_span(workarea: Any, height_config: Any) -> tuple[int, int]:
+    # Top edge and height come from the work area rather than the raw monitor
+    # geometry, so the panel stops short of docks and panels that already
+    # reserved space for themselves instead of covering them.
+    height = workarea.height if height_config == "screen" else int(height_config)
+    return workarea.y, height
+
+
 def panel_animation_step(distance: int) -> int:
     # Clamping to the remaining distance is what keeps the animation from
     # oscillating: without it the minimum step overshoots the target whenever
@@ -1234,15 +1242,14 @@ class AiBarWindow(Gtk.Window):
     def _apply_panel_geometry(self) -> None:
         panel = self.config["panel"]
         geometry = self._monitor_geometry()
-        # A configured width wider than the chosen monitor would throw off the
-        # right-hand placement, so it is capped at the monitor itself.
         self.panel_width = min(self.panel_width, geometry.width)
         width = self.panel_width
-        height_config = panel.get("height", "screen")
-        height = geometry.height if height_config == "screen" else int(height_config)
+        y, height = panel_vertical_span(
+            self._monitor_workarea(),
+            panel.get("height", "screen"),
+        )
         side = panel.get("side", "left")
         x = panel_x_for_state(side, geometry.x, geometry.width, width, self.panel_hidden)
-        y = geometry.y
 
         self.set_default_size(width, height)
         self.resize(width, height)
@@ -1280,7 +1287,7 @@ class AiBarWindow(Gtk.Window):
 
     def _animate_panel_to(self, target_x: int) -> bool:
         current_x, _current_y = self.get_position()
-        geometry = self._monitor_geometry()
+        geometry = self._monitor_workarea()
         distance = target_x - current_x
         if abs(distance) <= 3:
             self.move(target_x, geometry.y)
@@ -1293,6 +1300,16 @@ class AiBarWindow(Gtk.Window):
         step = panel_animation_step(distance)
         self.move(current_x + (step if distance > 0 else -step), geometry.y)
         return True
+
+    def _monitor_geometry(self) -> Gdk.Rectangle:
+        return self._resolve_monitor().get_geometry()
+
+    def _monitor_workarea(self) -> Gdk.Rectangle:
+        monitor = self._resolve_monitor()
+        try:
+            return monitor.get_workarea()
+        except Exception:
+            return monitor.get_geometry()
 
     def _find_monitor(self, wanted: Any) -> Any | None:
         # A monitor is named either by index or by connector name, the same
