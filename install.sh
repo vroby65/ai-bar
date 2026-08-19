@@ -14,6 +14,7 @@ APT_PACKAGES=(
     gir1.2-vte-2.91
     gir1.2-wnck-3.0
     gir1.2-xapp-1.0
+    gir1.2-webkit2-4.1
     python3-xlib
     openbox
     pipx

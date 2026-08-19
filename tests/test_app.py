@@ -1,6 +1,7 @@
 import os
 import unittest
 from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import gi
@@ -26,6 +27,7 @@ from ai_bar.app import (
     panel_vertical_span,
     place_window,
     panel_x_for_state,
+    webkit_cookie_storage_path,
     set_system_muted,
     set_system_volume,
     terminal_argv,
@@ -75,6 +77,119 @@ class ClockLayoutTests(unittest.TestCase):
 
         window._launch.assert_called_once_with(["firefox"], maximized=True)
         button.destroy()
+
+    def test_window_launcher_uses_embedded_window_switch(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._switch_embedded_window = Mock()
+        button = window._build_launcher_button(
+            {"label": "Caja", "command": ["caja"], "target": "window"}
+        )
+
+        button.emit("clicked")
+
+        window._switch_embedded_window.assert_called_once_with(["caja"], "Caja")
+        button.destroy()
+
+    def test_url_launcher_uses_webview_switch(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._switch_webview = Mock()
+        button = window._build_launcher_button(
+            {"label": "Chat", "url": "https://example.com", "target": "url"}
+        )
+
+        button.emit("clicked")
+
+        window._switch_webview.assert_called_once_with("https://example.com", "Chat")
+        button.destroy()
+
+    def test_webview_ctrl_plus_zooms_in(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        webview = Mock()
+        webview.get_zoom_level.return_value = 1.0
+        event = Mock(state=Gdk.ModifierType.CONTROL_MASK, keyval=Gdk.KEY_plus)
+
+        self.assertTrue(window._on_webview_key_press(webview, event))
+        webview.set_zoom_level.assert_called_once_with(1.1)
+
+    def test_webview_ctrl_minus_zooms_out(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        webview = Mock()
+        webview.get_zoom_level.return_value = 1.0
+        event = Mock(state=Gdk.ModifierType.CONTROL_MASK, keyval=Gdk.KEY_minus)
+
+        self.assertTrue(window._on_webview_key_press(webview, event))
+        webview.set_zoom_level.assert_called_once_with(0.9)
+
+    def test_launcher_group_uses_an_adaptive_flowbox(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+
+        group = window._build_launcher_group(
+            {
+                "title": "",
+                "buttons": [
+                    {"label": "One", "command": ["one"]},
+                    {"label": "Two", "command": ["two"]},
+                    {"label": "Three", "command": ["three"]},
+                ],
+            }
+        )
+
+        flow = group.get_children()[0]
+        self.assertIsInstance(flow, Gtk.FlowBox)
+        self.assertTrue(flow.get_homogeneous())
+        self.assertEqual(flow.get_min_children_per_line(), 1)
+        self.assertEqual(flow.get_max_children_per_line(), 3)
+        self.assertEqual(len(flow.get_children()), 3)
+        for child in flow.get_children():
+            self.assertTrue(child.get_child().get_hexpand())
+
+        group.destroy()
+
+    def test_webkit_cookie_storage_path_uses_xdg_data_home(self):
+        with patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/xdg-data"}):
+            self.assertEqual(
+                webkit_cookie_storage_path(),
+                Path("/tmp/xdg-data/ai-bar/webkit/cookies.sqlite"),
+            )
+
+    @patch("ai_bar.app.WebKit2")
+    def test_webview_persistence_uses_a_persistent_cookie_store(self, webkit2):
+        with patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/xdg-data"}):
+            expected_path = Path("/tmp/xdg-data/ai-bar/webkit/cookies.sqlite")
+
+            context = Mock()
+            data_manager = Mock()
+            cookie_manager = Mock()
+            webkit2.WebContext.get_default.return_value = context
+            context.get_website_data_manager.return_value = data_manager
+            data_manager.get_cookie_manager.return_value = cookie_manager
+
+            window = AiBarWindow.__new__(AiBarWindow)
+            window.web_context = None
+            window._configure_webkit_cookie_persistence()
+
+            cookie_manager.set_persistent_storage.assert_called_once_with(
+                str(expected_path),
+                webkit2.CookiePersistentStorage.SQLITE,
+            )
+            self.assertIs(window.web_context, context)
+
+    @patch("ai_bar.app.WebKit2")
+    def test_url_launcher_reuses_the_shared_webkit_context(self, webkit2):
+        webview = Mock()
+        webkit2.WebView.new_with_context.return_value = webview
+        context = Mock()
+
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.web_context = context
+        window.embedded = {}
+        window.terminal_notebook = Mock()
+        window.present = Mock()
+        window._switch_webview("https://example.com", "Chat")
+
+        webkit2.WebView.new_with_context.assert_called_once_with(context)
+        webview.load_uri.assert_called_once_with("https://example.com")
+        window.terminal_notebook.append_page.assert_called_once()
 
     def test_maximize_launched_window_ignores_windows_present_before_launch(self):
         class Window:
@@ -134,6 +249,44 @@ class ClockLayoutTests(unittest.TestCase):
         xembed_host.assert_called_once_with(tray_flow, 24)
 
         status_area.destroy()
+
+    def test_status_button_icon_only_omits_the_label(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.status_labels = []
+
+        button = window._build_status_button(
+            {
+                "type": "display",
+                "label": "Display",
+                "icon": "preferences-desktop-display-symbolic",
+                "command": ["arandr"],
+                "icon_only": True,
+            }
+        )
+
+        children = button.get_child().get_children()
+        self.assertEqual(len(children), 1)
+        self.assertIsInstance(children[0], Gtk.Image)
+        button.destroy()
+
+    def test_status_button_without_icon_only_shows_icon_and_label(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.status_labels = []
+
+        button = window._build_status_button(
+            {
+                "type": "display",
+                "label": "Display",
+                "icon": "preferences-desktop-display-symbolic",
+                "command": ["arandr"],
+            }
+        )
+
+        children = button.get_child().get_children()
+        self.assertEqual(len(children), 2)
+        self.assertIsInstance(children[0], Gtk.Image)
+        self.assertIsInstance(children[1], Gtk.Label)
+        button.destroy()
 
     def test_clock_labels_fit_inline_when_width_allows_it(self):
         self.assertTrue(clock_labels_fit_inline(120, 50, 60, 10))

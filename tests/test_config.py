@@ -123,6 +123,54 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_config(path)
 
+    def test_load_config_accepts_window_and_url_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "launcher_groups": [
+                            {
+                                "buttons": [
+                                    {
+                                        "label": "Caja",
+                                        "command": ["caja"],
+                                        "target": "window",
+                                    },
+                                    {
+                                        "label": "Chat",
+                                        "url": "https://example.com",
+                                        "target": "url",
+                                    },
+                                ]
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+        self.assertEqual(config["launcher_groups"][0]["buttons"][0]["target"], "window")
+        self.assertEqual(config["launcher_groups"][0]["buttons"][1]["target"], "url")
+
+    def test_load_config_requires_url_for_url_target(self):
+        for buttons in (
+            [{"label": "Chat", "target": "url"}],
+            [{"label": "Chat", "url": "  ", "target": "url"}],
+        ):
+            with self.subTest(buttons=buttons):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "config.json"
+                    path.write_text(
+                        json.dumps({"launcher_groups": [{"buttons": buttons}]}),
+                        encoding="utf-8",
+                    )
+
+                    with self.assertRaises(ConfigError):
+                        load_config(path)
+
 
 if __name__ == "__main__":
     unittest.main()

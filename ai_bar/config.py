@@ -72,7 +72,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             ],
         },
         {
-            "title": "Ai-tools",
+            "title": "tools",
             "columns": 4,
             "buttons": [
                 {
@@ -214,13 +214,24 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ConfigError("launcher_groups[].columns deve essere un intero positivo.")
         for button in group.get("buttons", []):
             target = button.get("target")
-            if target is not None and target != "terminal":
-                raise ConfigError("launcher_groups[].buttons[].target deve essere 'terminal'.")
+            if target is not None and target not in {"terminal", "window", "url"}:
+                raise ConfigError(
+                    "launcher_groups[].buttons[].target deve essere 'terminal', 'window' oppure 'url'."
+                )
             if not isinstance(button.get("maximized", False), bool):
                 raise ConfigError("launcher_groups[].buttons[].maximized deve essere true oppure false.")
-            validate_command(button.get("command"), "launcher_groups[].buttons[].command")
+            if target == "url":
+                url = button.get("url")
+                if not isinstance(url, str) or not url.strip():
+                    raise ConfigError("launcher_groups[].buttons[].url deve essere un URL non vuoto.")
+                if button.get("command") is not None:
+                    validate_command(button.get("command"), "launcher_groups[].buttons[].command")
+            else:
+                validate_command(button.get("command"), "launcher_groups[].buttons[].command")
 
     for item in config.get("tray", {}).get("items", []):
+        if not isinstance(item.get("icon_only", False), bool):
+            raise ConfigError("tray.items[].icon_only deve essere true oppure false.")
         if item.get("type") == "command":
             validate_command(item.get("command"), "tray.items[].command")
         elif item.get("command") is not None:

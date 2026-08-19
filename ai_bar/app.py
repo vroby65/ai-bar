@@ -29,6 +29,12 @@ except Exception:  # pragma: no cover - exercised only on systems without Wnck.
     Wnck = None
 
 try:
+    gi.require_version("WebKit2", "4.1")
+    from gi.repository import WebKit2
+except Exception:  # pragma: no cover - exercised only on systems without WebKit2.
+    WebKit2 = None
+
+try:
     from Xlib import X, XK, display as xlib_display
     from Xlib.ext import record
     from Xlib.protocol import rq
@@ -52,6 +58,9 @@ PANEL_ANIMATION_MIN_STEP = 18
 VOLUME_UPDATE_DELAY_MS = 120
 LAUNCH_MAXIMIZE_INTERVAL_MS = 100
 LAUNCH_MAXIMIZE_ATTEMPTS = 50
+EMBED_POLL_INTERVAL_MS = 150
+EMBED_POLL_ATTEMPTS = 60
+WEBVIEW_ZOOM_STEP = 0.1
 TERMINAL_FOREGROUND = "#f2f2ee"
 TERMINAL_BACKGROUND = "#151819"
 TERMINAL_PALETTE = (
@@ -109,6 +118,13 @@ def terminal_tab_label(command: str | list[str] | None) -> str:
     first = shlex.split(command)[0] if isinstance(command, str) else command[0]
     name = Path(first).name
     return {"ds-code": "DS Code"}.get(name, name.capitalize())
+
+
+def webkit_cookie_storage_path() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME")
+    if data_home:
+        return Path(data_home) / "ai-bar" / "webkit" / "cookies.sqlite"
+    return Path.home() / ".local" / "share" / "ai-bar" / "webkit" / "cookies.sqlite"
 
 
 def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
@@ -443,6 +459,7 @@ class AiBarWindow(Gtk.Window):
         super().__init__(title="ai-bar")
         self.config = config
         self.config_path = config_path
+        self.web_context: Any | None = None
         self.tray_host: XEmbedTrayHost | None = None
         self.xapp_tray_host: XAppStatusIconHost | None = None
         self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
@@ -453,6 +470,7 @@ class AiBarWindow(Gtk.Window):
         self.volume_update_timeout_id: int | None = None
         self.terminal: Vte.Terminal | None = None
         self.terminals: dict[str, Vte.Terminal] = {}
+        self.embedded: dict[str, Gtk.Widget] = {}
         self.terminal_notebook: Gtk.Notebook | None = None
         self.wnck_screen: Any = None
         self.window_flow: Gtk.FlowBox | None = None
@@ -468,6 +486,8 @@ class AiBarWindow(Gtk.Window):
         self.monitor_warning_shown = False
         self.launch_monitor_warning_shown = False
         self.resize_drag: tuple[int, float] | None = None
+
+        self._configure_webkit_cookie_persistence()
 
         panel = self.config["panel"]
         self.set_name("ai-bar")
@@ -486,6 +506,19 @@ class AiBarWindow(Gtk.Window):
         self._install_css()
         self.add(self._build_content())
         self.show_all()
+
+    def _configure_webkit_cookie_persistence(self) -> None:
+        if WebKit2 is None:
+            return
+
+        self.web_context = WebKit2.WebContext.get_default()
+        cookie_manager = self.web_context.get_website_data_manager().get_cookie_manager()
+        cookie_path = webkit_cookie_storage_path()
+        cookie_path.parent.mkdir(parents=True, exist_ok=True)
+        cookie_manager.set_persistent_storage(
+            str(cookie_path),
+            WebKit2.CookiePersistentStorage.SQLITE,
+        )
 
     def _build_content(self) -> Gtk.Widget:
         root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -617,18 +650,18 @@ class AiBarWindow(Gtk.Window):
             image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.BUTTON)
             inner.pack_start(image, False, False, 0)
 
-        label = Gtk.Label(label=str(item.get("label", "")))
-        label.set_ellipsize(Pango.EllipsizeMode.END)
-        label.set_max_width_chars(14)
-        inner.pack_start(label, False, False, 0)
+        if not item.get("icon_only", False):
+            label = Gtk.Label(label=str(item.get("label", "")))
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_max_width_chars(14)
+            inner.pack_start(label, False, False, 0)
+            if item.get("type") == "wifi":
+                self.status_labels.append((item, label))
         button.add(inner)
 
         command = item.get("command")
         if command:
             button.connect("clicked", lambda _button: self._launch(command))
-
-        if item.get("type") == "wifi":
-            self.status_labels.append((item, label))
 
         return button
 
@@ -706,27 +739,51 @@ class AiBarWindow(Gtk.Window):
             label.get_style_context().add_class("section-title")
             box.pack_start(label, False, False, 0)
 
-        columns = max(1, int(group.get("columns", 1)))
-        grid = Gtk.Grid(column_spacing=6, row_spacing=6)
-        grid.set_column_homogeneous(True)
+        buttons = list(group.get("buttons", []))
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_column_spacing(6)
+        flow.set_row_spacing(6)
+        flow.set_homogeneous(True)
+        flow.set_min_children_per_line(1)
+        flow.set_max_children_per_line(max(1, len(buttons)))
 
-        for index, button_config in enumerate(group.get("buttons", [])):
+        for button_config in buttons:
             button = self._build_launcher_button(button_config)
-            grid.attach(button, index % columns, index // columns, 1, 1)
+            self._add_flow_child(flow, button)
 
-        box.pack_start(grid, False, False, 0)
+        box.pack_start(flow, False, False, 0)
         return box
 
     def _build_launcher_button(self, button_config: dict[str, Any]) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("launcher-button")
         button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_hexpand(True)
+        button.set_halign(Gtk.Align.FILL)
         button.set_tooltip_text(str(button_config.get("label", "")))
-        if button_config.get("target") == "terminal":
+        target = button_config.get("target")
+        if target == "terminal":
             button.connect(
                 "clicked",
                 lambda _button: self._switch_terminal(
                     button_config["command"],
+                    str(button_config.get("label", "")),
+                ),
+            )
+        elif target == "window":
+            button.connect(
+                "clicked",
+                lambda _button: self._switch_embedded_window(
+                    button_config["command"],
+                    str(button_config.get("label", "")),
+                ),
+            )
+        elif target == "url":
+            button.connect(
+                "clicked",
+                lambda _button: self._switch_webview(
+                    str(button_config["url"]),
                     str(button_config.get("label", "")),
                 ),
             )
@@ -742,6 +799,7 @@ class AiBarWindow(Gtk.Window):
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         inner.set_halign(Gtk.Align.CENTER)
         inner.set_valign(Gtk.Align.CENTER)
+        inner.set_hexpand(True)
 
         icon_name = button_config.get("icon")
         if icon_name:
@@ -932,6 +990,23 @@ class AiBarWindow(Gtk.Window):
             return True
         return False
 
+    def _on_webview_key_press(self, webview: Any, event: Gdk.EventKey) -> bool:
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        if not ctrl:
+            return False
+
+        if event.keyval in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
+            self._change_webview_zoom(webview, WEBVIEW_ZOOM_STEP)
+            return True
+        if event.keyval in (Gdk.KEY_minus, Gdk.KEY_KP_Subtract):
+            self._change_webview_zoom(webview, -WEBVIEW_ZOOM_STEP)
+            return True
+        return False
+
+    def _change_webview_zoom(self, webview: Any, delta: float) -> None:
+        current_zoom = float(webview.get_zoom_level())
+        webview.set_zoom_level(max(0.25, min(3.0, current_zoom + delta)))
+
     def _build_terminal_menu(self, terminal: Vte.Terminal) -> Gtk.Menu:
         menu = Gtk.Menu()
         copy_item = Gtk.MenuItem(label="Copia")
@@ -951,10 +1026,11 @@ class AiBarWindow(Gtk.Window):
     def _on_terminal_page_switched(
         self,
         _notebook: Gtk.Notebook,
-        terminal: Vte.Terminal,
+        terminal: Gtk.Widget,
         _page: int,
     ) -> None:
-        self.terminal = terminal
+        if isinstance(terminal, Vte.Terminal):
+            self.terminal = terminal
 
     def _on_resize_handle_realize(self, handle: Gtk.Widget) -> None:
         gdk_window = handle.get_window()
@@ -1219,6 +1295,99 @@ class AiBarWindow(Gtk.Window):
         self.terminal_notebook.set_current_page(page)
         self.present()
         terminal.grab_focus()
+
+    def _switch_embedded_window(self, command: str | list[str], label: str | None = None) -> None:
+        if self.terminal_notebook is None:
+            self._show_error("Terminale non disponibile.")
+            return
+        if Wnck is None or self.wnck_screen is None:
+            print("ai-bar: libwnck non disponibile, finestra aperta esternamente.", file=sys.stderr)
+            self._launch(command)
+            return
+
+        key = "window:" + command_to_shell_line(command)
+        widget = self.embedded.get(key)
+        if widget is None:
+            try:
+                subprocess.Popen(command, start_new_session=True)
+            except Exception as exc:
+                self._show_error(f"Comando non avviato: {command}\n{exc}")
+                return
+            socket = Gtk.Socket()
+            socket.set_hexpand(True)
+            socket.set_vexpand(True)
+            socket.connect("realize", self._embed_launched_window)
+            widget = socket
+            self.embedded[key] = socket
+            page = self.terminal_notebook.append_page(
+                socket,
+                Gtk.Label(label=label or terminal_tab_label(command)),
+            )
+        else:
+            page = self.terminal_notebook.page_num(widget)
+        widget.show_all()
+        self.terminal_notebook.set_current_page(page)
+        self.present()
+
+    def _embed_launched_window(self, socket: Gtk.Socket) -> None:
+        if self.wnck_screen is None:
+            return
+        try:
+            self.wnck_screen.force_update()
+            existing_xids = {
+                int(window.get_xid()) for window in self.wnck_screen.get_windows_stacked()
+            }
+        except Exception as exc:
+            print(f"ai-bar: stato finestre non disponibile: {exc}", file=sys.stderr)
+            return
+        attempts_remaining = EMBED_POLL_ATTEMPTS
+
+        def embed_when_ready() -> bool:
+            nonlocal attempts_remaining
+            try:
+                self.wnck_screen.force_update()
+                for window in self.wnck_screen.get_windows_stacked():
+                    xid = int(window.get_xid())
+                    if xid != self.own_xid and xid not in existing_xids and not window.is_skip_tasklist():
+                        socket.add_id(xid)
+                        return False
+            except Exception as exc:
+                print(f"ai-bar: finestra non incorporata: {exc}", file=sys.stderr)
+                return False
+
+            attempts_remaining -= 1
+            return attempts_remaining > 0
+
+        GLib.timeout_add(EMBED_POLL_INTERVAL_MS, embed_when_ready)
+
+    def _switch_webview(self, url: str, label: str | None = None) -> None:
+        if self.terminal_notebook is None:
+            self._show_error("Terminale non disponibile.")
+            return
+        if WebKit2 is None:
+            self._launch(["xdg-open", url])
+            return
+
+        key = "url:" + url
+        widget = self.embedded.get(key)
+        if widget is None:
+            webview = WebKit2.WebView.new_with_context(self.web_context or WebKit2.WebContext.get_default())
+            webview.set_hexpand(True)
+            webview.set_vexpand(True)
+            webview.connect("key-press-event", self._on_webview_key_press)
+            webview.load_uri(url)
+            widget = webview
+            self.embedded[key] = webview
+            page = self.terminal_notebook.append_page(
+                webview,
+                Gtk.Label(label=label or "Web"),
+            )
+        else:
+            page = self.terminal_notebook.page_num(widget)
+        widget.show_all()
+        self.terminal_notebook.set_current_page(page)
+        self.present()
+        widget.grab_focus()
 
     def _reload(self) -> None:
         if self.xapp_tray_host is not None:
