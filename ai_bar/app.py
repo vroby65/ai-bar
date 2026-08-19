@@ -84,6 +84,14 @@ def panel_x_for_state(side: str, screen_x: int, screen_width: int, panel_width: 
     return screen_x - panel_width if hidden else screen_x
 
 
+def panel_vertical_span(workarea: Any, height_config: Any) -> tuple[int, int]:
+    # Top edge and height come from the work area rather than the raw monitor
+    # geometry, so the panel stops short of docks and panels that already
+    # reserved space for themselves instead of covering them.
+    height = workarea.height if height_config == "screen" else int(height_config)
+    return workarea.y, height
+
+
 def panel_animation_step(distance: int) -> int:
     # Clamping to the remaining distance is what keeps the animation from
     # oscillating: without it the minimum step overshoots the target whenever
@@ -1193,11 +1201,10 @@ class AiBarWindow(Gtk.Window):
         panel = self.config["panel"]
         width = self.panel_width
         geometry = self._monitor_geometry()
-        height_config = panel.get("height", "screen")
-        height = geometry.height if height_config == "screen" else int(height_config)
+        y, height = panel_vertical_span(self._monitor_workarea(),
+                                        panel.get("height", "screen"))
         side = panel.get("side", "left")
         x = panel_x_for_state(side, geometry.x, geometry.width, width, self.panel_hidden)
-        y = geometry.y
 
         self.set_default_size(width, height)
         self.resize(width, height)
@@ -1235,7 +1242,7 @@ class AiBarWindow(Gtk.Window):
 
     def _animate_panel_to(self, target_x: int) -> bool:
         current_x, _current_y = self.get_position()
-        geometry = self._monitor_geometry()
+        geometry = self._monitor_workarea()
         distance = target_x - current_x
         if abs(distance) <= 3:
             self.move(target_x, geometry.y)
@@ -1250,9 +1257,21 @@ class AiBarWindow(Gtk.Window):
         return True
 
     def _monitor_geometry(self) -> Gdk.Rectangle:
+        return self._monitor().get_geometry()
+
+    def _monitor(self) -> Any:
         display = Gdk.Display.get_default()
-        monitor = display.get_primary_monitor() or display.get_monitor(0)
-        return monitor.get_geometry()
+        return display.get_primary_monitor() or display.get_monitor(0)
+
+    def _monitor_workarea(self) -> Gdk.Rectangle:
+        # Only the vertical span is taken from here. The work area width already
+        # excludes the strut the panel reserves for itself, so using it would
+        # shrink the panel a little more every time the geometry is reapplied.
+        monitor = self._monitor()
+        try:
+            return monitor.get_workarea()
+        except Exception:
+            return monitor.get_geometry()
 
     def _apply_strut(self) -> None:
         if self.panel_hidden or not self.config.get("panel", {}).get("reserve_space", True):
