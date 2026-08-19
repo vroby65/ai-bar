@@ -118,23 +118,58 @@ def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
     return None
 
 
+def centered_position(area: Any, width: int, height: int) -> tuple[int, int]:
+    # Top left corner that centres a window of this size inside the area. A
+    # window larger than the area rests on the origin rather than taking
+    # negative coordinates, which would push it off screen.
+    x = area.x + max(0, (area.width - width) // 2)
+    y = area.y + max(0, (area.height - height) // 2)
+    return x, y
+
+
+def place_window(window: Any, area: Any | None, maximize: bool) -> None:
+    # Moving comes before maximizing because the window manager maximizes onto
+    # whichever monitor the window currently sits on: doing it the other way
+    # round would expand the window on the monitor we are trying to leave.
+    if area is not None and Wnck is not None:
+        try:
+            window.unmaximize()
+            if maximize:
+                # The exact spot does not matter, it is about to be maximized;
+                # only the monitor does.
+                x, y = area.x, area.y
+            else:
+                _x, _y, width, height = window.get_geometry()
+                x, y = centered_position(area, width, height)
+            window.set_geometry(
+                Wnck.WindowGravity.CURRENT,
+                Wnck.WindowMoveResizeMask.X | Wnck.WindowMoveResizeMask.Y,
+                x, y, -1, -1)
+        except Exception as exc:
+            print(f"ai-bar: finestra non spostata: {exc}", file=sys.stderr)
+    if maximize:
+        window.maximize()
+
+
 def maximize_launched_window(
     windows: list[Any],
     existing_xids: set[int],
     active_window: Any | None,
     previous_active_xid: int | None,
     own_xid: int | None,
+    area: Any | None = None,
+    maximize: bool = True,
 ) -> bool:
     for window in reversed(windows):
         xid = int(window.get_xid())
         if xid != own_xid and xid not in existing_xids:
-            window.maximize()
+            place_window(window, area, maximize)
             return True
 
     if active_window is not None:
         xid = int(active_window.get_xid())
         if xid != own_xid and xid != previous_active_xid:
-            active_window.maximize()
+            place_window(active_window, area, maximize)
             return True
 
     return False
@@ -430,6 +465,8 @@ class AiBarWindow(Gtk.Window):
         self.panel_hidden = False
         self.panel_animation_id: int | None = None
         self.panel_geometry_applied = False
+        self.monitor_warning_shown = False
+        self.launch_monitor_warning_shown = False
         self.resize_drag: tuple[int, float] | None = None
 
         panel = self.config["panel"]
@@ -1111,7 +1148,10 @@ class AiBarWindow(Gtk.Window):
     def _launch(self, command: str | list[str], maximized: bool = False) -> None:
         existing_xids: set[int] | None = None
         previous_active_xid: int | None = None
-        if maximized and self.wnck_screen is not None:
+        # A window that is not maximized still has to be followed when a launch
+        # monitor is set, otherwise it opens behind the panel just the same.
+        launch_area = self._launch_area()
+        if (maximized or launch_area is not None) and self.wnck_screen is not None:
             try:
                 self.wnck_screen.force_update()
                 existing_xids = {
@@ -1145,10 +1185,12 @@ class AiBarWindow(Gtk.Window):
                         self.wnck_screen.get_active_window(),
                         previous_active_xid,
                         self.own_xid,
+                        launch_area,
+                        maximized,
                     ):
                         return False
                 except Exception as exc:
-                    print(f"ai-bar: finestra non massimizzata: {exc}", file=sys.stderr)
+                    print(f"ai-bar: finestra non sistemata: {exc}", file=sys.stderr)
                     return False
 
                 attempts_remaining -= 1
@@ -1199,10 +1241,13 @@ class AiBarWindow(Gtk.Window):
 
     def _apply_panel_geometry(self) -> None:
         panel = self.config["panel"]
-        width = self.panel_width
         geometry = self._monitor_geometry()
-        y, height = panel_vertical_span(self._monitor_workarea(),
-                                        panel.get("height", "screen"))
+        self.panel_width = min(self.panel_width, geometry.width)
+        width = self.panel_width
+        y, height = panel_vertical_span(
+            self._monitor_workarea(),
+            panel.get("height", "screen"),
+        )
         side = panel.get("side", "left")
         x = panel_x_for_state(side, geometry.x, geometry.width, width, self.panel_hidden)
 
@@ -1257,21 +1302,80 @@ class AiBarWindow(Gtk.Window):
         return True
 
     def _monitor_geometry(self) -> Gdk.Rectangle:
-        return self._monitor().get_geometry()
-
-    def _monitor(self) -> Any:
-        display = Gdk.Display.get_default()
-        return display.get_primary_monitor() or display.get_monitor(0)
+        return self._resolve_monitor().get_geometry()
 
     def _monitor_workarea(self) -> Gdk.Rectangle:
-        # Only the vertical span is taken from here. The work area width already
-        # excludes the strut the panel reserves for itself, so using it would
-        # shrink the panel a little more every time the geometry is reapplied.
-        monitor = self._monitor()
+        monitor = self._resolve_monitor()
         try:
             return monitor.get_workarea()
         except Exception:
             return monitor.get_geometry()
+
+    def _find_monitor(self, wanted: Any) -> Any | None:
+        # A monitor is named either by index or by connector name, the same
+        # string xrandr prints, for example "DP-1". None when it matches
+        # nothing, so callers can fall back instead of crashing at startup.
+        display = Gdk.Display.get_default()
+        if isinstance(wanted, int) and not isinstance(wanted, bool):
+            return display.get_monitor(wanted)
+        for index in range(display.get_n_monitors()):
+            monitor = display.get_monitor(index)
+            if monitor is not None and monitor.get_model() == str(wanted):
+                return monitor
+        return None
+
+    def _primary_monitor(self) -> Any:
+        display = Gdk.Display.get_default()
+        return display.get_primary_monitor() or display.get_monitor(0)
+
+    def _resolve_monitor(self) -> Any:
+        wanted = self.config.get("panel", {}).get("monitor")
+        if wanted is None:
+            return self._primary_monitor()
+
+        monitor = self._find_monitor(wanted)
+        if monitor is not None:
+            return monitor
+
+        if not self.monitor_warning_shown:
+            self.monitor_warning_shown = True
+            print(f"ai-bar: monitor {wanted!r} non trovato, uso il primario.",
+                  file=sys.stderr)
+        return self._primary_monitor()
+
+    def _launch_area(self) -> Any | None:
+        # Where windows started from the panel should appear. Leaving them on
+        # the panel monitor is a poor default when ai-bar covers it entirely:
+        # the panel is kept above everything, so the new window opens hidden
+        # behind it. None means "leave placement to the window manager".
+        wanted = self.config.get("panel", {}).get("launch_monitor")
+        if wanted is None:
+            return None
+
+        if wanted == "auto":
+            monitor = self._primary_monitor()
+        else:
+            monitor = self._find_monitor(wanted)
+            if monitor is None:
+                if not self.launch_monitor_warning_shown:
+                    self.launch_monitor_warning_shown = True
+                    print(f"ai-bar: monitor di lancio {wanted!r} non trovato, "
+                          "le finestre restano dove le mette il window manager.",
+                          file=sys.stderr)
+                return None
+        if monitor is None:
+            return None
+
+        area = monitor.get_workarea()
+        # A single monitor, or a panel already sitting on the target: moving
+        # windows would solve nothing and would only surprise the user.
+        panel_geometry = self._resolve_monitor().get_geometry()
+        if area.x == panel_geometry.x and area.y == panel_geometry.y:
+            return None
+        return area
+
+    def _monitor_geometry(self) -> Gdk.Rectangle:
+        return self._resolve_monitor().get_geometry()
 
     def _apply_strut(self) -> None:
         if self.panel_hidden or not self.config.get("panel", {}).get("reserve_space", True):

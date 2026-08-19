@@ -19,6 +19,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "decorated": False,
         "keep_above": True,
         "resizable": True,
+        "monitor": None,
+        "launch_monitor": None,
         "reserve_space": True,
     },
     "clock": {
@@ -169,6 +171,14 @@ def merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, An
     return merged
 
 
+def _is_monitor_reference(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value >= 0
+    return isinstance(value, str) and value.strip() != ""
+
+
 def validate_config(config: dict[str, Any]) -> None:
     panel = config.get("panel", {})
     side = panel.get("side")
@@ -182,6 +192,21 @@ def validate_config(config: dict[str, Any]) -> None:
     resizable = panel.get("resizable", True)
     if not isinstance(resizable, bool):
         raise ConfigError("panel.resizable deve essere true oppure false.")
+
+    monitor = panel.get("monitor")
+    if monitor is not None and not _is_monitor_reference(monitor):
+        raise ConfigError(
+            "panel.monitor deve essere null, un indice intero non negativo "
+            "oppure il nome di un connettore (es. \"DP-1\")."
+        )
+
+    launch_monitor = panel.get("launch_monitor")
+    if (launch_monitor is not None and launch_monitor != "auto"
+            and not _is_monitor_reference(launch_monitor)):
+        raise ConfigError(
+            "panel.launch_monitor deve essere null, \"auto\", un indice "
+            "intero non negativo oppure il nome di un connettore."
+        )
 
     for group in config.get("launcher_groups", []):
         columns = group.get("columns", 1)
