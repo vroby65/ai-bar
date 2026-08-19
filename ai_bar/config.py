@@ -20,6 +20,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "keep_above": True,
         "resizable": True,
         "monitor": None,
+        "launch_monitor": None,
         "reserve_space": True,
     },
     "clock": {
@@ -197,6 +198,14 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ConfigError(
             "panel.monitor deve essere null, un indice intero non negativo "
             "oppure il nome di un connettore (es. \"DP-1\")."
+        )
+
+    launch_monitor = panel.get("launch_monitor")
+    if (launch_monitor is not None and launch_monitor != "auto"
+            and not _is_monitor_reference(launch_monitor)):
+        raise ConfigError(
+            "panel.launch_monitor deve essere null, \"auto\", un indice "
+            "intero non negativo oppure il nome di un connettore."
         )
 
     for group in config.get("launcher_groups", []):

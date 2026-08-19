@@ -12,18 +12,30 @@ class MonitorConfigTests(unittest.TestCase):
         config["panel"].update(panel)
         return config
 
-    def test_monitor_defaults_to_unset(self):
-        self.assertIsNone(default_config()["panel"]["monitor"])
+    def test_monitor_keys_default_to_unset(self):
+        config = default_config()
+
+        self.assertIsNone(config["panel"]["monitor"])
+        self.assertIsNone(config["panel"]["launch_monitor"])
 
     def test_monitor_accepts_an_index_or_a_connector_name(self):
         validate_config(self._config(monitor=1))
         validate_config(self._config(monitor="DP-1"))
+
+    def test_launch_monitor_accepts_auto(self):
+        validate_config(self._config(launch_monitor="auto"))
 
     def test_monitor_rejects_nonsense(self):
         for value in (-1, True, "", "   ", 1.5, []):
             with self.subTest(value=value):
                 with self.assertRaises(ConfigError):
                     validate_config(self._config(monitor=value))
+
+    def test_launch_monitor_rejects_nonsense(self):
+        for value in (-1, True, "", 1.5):
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigError):
+                    validate_config(self._config(launch_monitor=value))
 
 
 class ConfigTests(unittest.TestCase):
