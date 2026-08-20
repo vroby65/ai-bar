@@ -59,6 +59,8 @@ class ConfigTests(unittest.TestCase):
             [button["label"] for button in config["session_buttons"]],
             ["Reload", "Logout", "Reboot", "Powerdown"],
         )
+        self.assertEqual(config["session_buttons"][2]["command"], ["systemctl", "reboot"])
+        self.assertEqual(config["session_buttons"][3]["command"], ["systemctl", "poweroff"])
 
     def test_user_config_overrides_nested_values_without_losing_defaults(self):
         merged = merge_config(
@@ -170,6 +172,26 @@ class ConfigTests(unittest.TestCase):
 
                     with self.assertRaises(ConfigError):
                         load_config(path)
+
+    def test_a_bad_webview_acceleration_policy_is_refused(self):
+        config = default_config()
+        config["webview"] = {"hardware_acceleration": "yes please"}
+
+        with self.assertRaises(ConfigError):
+            validate_config(config)
+
+    def test_the_three_webview_acceleration_policies_are_accepted(self):
+        for value in ("never", "on-demand", "always"):
+            with self.subTest(value=value):
+                config = default_config()
+                config["webview"] = {"hardware_acceleration": value}
+                validate_config(config)
+
+    def test_webview_acceleration_may_be_left_out(self):
+        config = default_config()
+        config.pop("webview", None)
+
+        validate_config(config)
 
 
 if __name__ == "__main__":

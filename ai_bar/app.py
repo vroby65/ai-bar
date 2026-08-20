@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import threading
+import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,10 +22,11 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("GdkX11", "3.0")
 gi.require_version("Vte", "2.91")
 
-from gi.repository import Gdk, GdkX11, GLib, Gtk, Pango, Vte
+from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk, Pango, Vte
 
 try:
     gi.require_version("Wnck", "3.0")
@@ -35,6 +41,12 @@ except Exception:  # pragma: no cover - exercised only on systems without WebKit
     WebKit2 = None
 
 try:
+    gi.require_version("Secret", "1")
+    from gi.repository import Secret
+except Exception:  # pragma: no cover - exercised only on systems without Secret.
+    Secret = None
+
+try:
     from Xlib import X, XK, display as xlib_display
     from Xlib.ext import record
     from Xlib.protocol import rq
@@ -45,7 +57,7 @@ except Exception:  # pragma: no cover - exercised only on systems without python
     record = None
     rq = None
 
-from .config import ConfigError, default_config, load_config
+from .config import ConfigError, default_config, default_config_path, load_config
 from .xapp_tray import XAppStatusIconHost
 from .xembed_tray import XEmbedTrayHost
 
@@ -61,6 +73,9 @@ LAUNCH_MAXIMIZE_ATTEMPTS = 50
 EMBED_POLL_INTERVAL_MS = 150
 EMBED_POLL_ATTEMPTS = 60
 WEBVIEW_ZOOM_STEP = 0.1
+FAVICON_SIZE = 24
+FAVICON_TIMEOUT_SECONDS = 5
+FAVICON_MAX_BYTES = 1 << 20
 TERMINAL_FOREGROUND = "#f2f2ee"
 TERMINAL_BACKGROUND = "#151819"
 TERMINAL_PALETTE = (
@@ -108,6 +123,60 @@ def panel_animation_step(distance: int) -> int:
     return min(abs(distance), max(PANEL_ANIMATION_MIN_STEP, abs(distance) // 3))
 
 
+LOGIN_FILL_JS = """
+(function () {
+  var user = document.querySelector('input[autocomplete="username"]')
+          || document.querySelector('input[name="username"]')
+          || document.querySelector('input[type="text"]');
+  var pass = document.querySelector('input[type="password"]');
+  if (!user || !pass) { return; }
+  if (user.value || pass.value) { return; }
+  user.value = %s;
+  pass.value = %s;
+  [user, pass].forEach(function (field) {
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+})();
+"""
+
+
+LOGIN_CAPTURE_JS = """
+(function () {
+  if (window.__aiBarLoginHook) { return; }
+  window.__aiBarLoginHook = true;
+  function grab(form) {
+    var pass = form.querySelector('input[type="password"]');
+    if (!pass || !pass.value) { return; }
+    var user = form.querySelector('input[autocomplete="username"]')
+            || form.querySelector('input[name="username"]')
+            || form.querySelector('input[type="text"]');
+    if (!user || !user.value) { return; }
+    window.webkit.messageHandlers.aiBarLogin.postMessage(
+      JSON.stringify({ username: user.value, password: pass.value }));
+  }
+  // L'evento submit copre il tasto Invio e il click sul bottone; l'ascolto e'
+  // in cattura perche' una pagina che chiama preventDefault fermerebbe la fase
+  // di bubbling prima che arrivi qui.
+  document.addEventListener('submit', function (event) {
+    if (event.target && event.target.tagName === 'FORM') { grab(event.target); }
+  }, true);
+})();
+"""
+
+
+def script_message_text(result: Any) -> str:
+    # WebKit 4.1 consegna un JSCValue, le versioni precedenti un
+    # JavascriptResult da cui va estratto: si accettano entrambi.
+    value = result
+    if hasattr(result, "get_js_value"):
+        value = result.get_js_value()
+    try:
+        return value.to_string()
+    except Exception:
+        return ""
+
+
 def clean_window_title(title: str) -> str:
     return " ".join(title.split()) or "Finestra"
 
@@ -120,11 +189,50 @@ def terminal_tab_label(command: str | list[str] | None) -> str:
     return {"ds-code": "DS Code"}.get(name, name.capitalize())
 
 
-def webkit_cookie_storage_path() -> Path:
+def webkit_data_directory() -> Path:
     data_home = os.environ.get("XDG_DATA_HOME")
-    if data_home:
-        return Path(data_home) / "ai-bar" / "webkit" / "cookies.sqlite"
-    return Path.home() / ".local" / "share" / "ai-bar" / "webkit" / "cookies.sqlite"
+    root = Path(data_home) if data_home else Path.home() / ".local" / "share"
+    return root / "ai-bar" / "webkit"
+
+
+def webkit_cookie_storage_path() -> Path:
+    return webkit_data_directory() / "cookies.sqlite"
+
+
+def webkit_favicon_database_directory() -> Path:
+    return webkit_data_directory() / "favicons"
+
+
+def favicon_cache_path(url: str) -> Path:
+    # WebKit ricorda le favicon che sa decodificare, non quelle che scarichiamo
+    # noi: senza questa copia il bottone ripartirebbe con l'icona di riserva a
+    # ogni avvio, fino alla prima apertura del sito.
+    digest = hashlib.sha1(url.encode("utf-8")).hexdigest()
+    return webkit_data_directory() / "icons" / f"button-{digest}.png"
+
+
+def same_origin(first: str, second: str) -> bool:
+    # Confronto schema/host/porta: basta a decidere se una pagina e' ancora
+    # quella per cui le credenziali erano state salvate.
+    try:
+        a, b = urllib.parse.urlsplit(first), urllib.parse.urlsplit(second)
+    except ValueError:
+        return False
+    if not a.scheme or not a.netloc or not b.scheme or not b.netloc:
+        return False
+    return (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
+
+
+
+
+def configuration_assistant_command(config_path: Path) -> list[str]:
+    return [
+        sys.executable or "python3",
+        "-m",
+        "ai_bar.config_assistant",
+        "--config",
+        str(config_path.resolve()),
+    ]
 
 
 def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
@@ -488,6 +596,8 @@ class AiBarWindow(Gtk.Window):
         self.launcher_buttons: dict[str, Gtk.Widget] = {}
         self.detached: dict[str, Gtk.Window] = {}
         self.detach_button: Gtk.Widget | None = None
+        self.favicon_targets: dict[str, Gtk.Image] = {}
+        self.favicon_fetched: set[str] = set()
         self.terminal_notebook: Gtk.Notebook | None = None
         self.wnck_screen: Any = None
         self.window_flow: Gtk.FlowBox | None = None
@@ -536,6 +646,14 @@ class AiBarWindow(Gtk.Window):
             str(cookie_path),
             WebKit2.CookiePersistentStorage.SQLITE,
         )
+
+        # Il database delle favicon va abilitato prima di qualunque
+        # caricamento, altrimenti le icone non vengono nemmeno registrate.
+        favicon_directory = webkit_favicon_database_directory()
+        favicon_directory.mkdir(parents=True, exist_ok=True)
+        self.web_context.set_favicon_database_directory(str(favicon_directory))
+        self.web_context.get_favicon_database().connect(
+            "favicon-changed", self._on_favicon_changed)
 
     def _build_content(self) -> Gtk.Widget:
         root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -608,6 +726,8 @@ class AiBarWindow(Gtk.Window):
         status_flow.set_direction(Gtk.TextDirection.LTR)
 
         for item in self.config.get("tray", {}).get("items", []):
+            if item.get("type") == "volume":
+                self._add_flow_child(status_flow, self._build_configuration_assistant_button())
             self._add_flow_child(status_flow, self._build_status_button(item))
 
         tray_flow = Gtk.FlowBox()
@@ -725,6 +845,37 @@ class AiBarWindow(Gtk.Window):
         self.volume_controls.append((scale, label, icon))
         return control
 
+    def _build_configuration_assistant_button(self) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("status-button")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text("Configura AI-bar con un agente")
+        button.add(Gtk.Image.new_from_icon_name("document-edit-symbolic", Gtk.IconSize.MENU))
+        button.connect("clicked", lambda _button: self._open_configuration_assistant())
+        return button
+
+    def _open_configuration_assistant(self) -> None:
+        config_path = self.config_path or default_config_path()
+        command = configuration_assistant_command(config_path)
+        key = terminal_session_key(command)
+        detached_window = self.detached.pop(key, None)
+        if detached_window is not None:
+            detached_page = detached_window.get_child()
+            if detached_page is not None:
+                detached_window.remove(detached_page)
+            detached_window.destroy()
+        previous_terminal = self.terminals.pop(key, None)
+        if previous_terminal is not None:
+            if self.terminal_notebook is not None:
+                page = self.terminal_notebook.page_num(previous_terminal)
+                if page >= 0:
+                    self.terminal_notebook.remove_page(page)
+            previous_terminal.destroy()
+        self._switch_terminal(
+            command,
+            "Configura",
+        )
+
     def _build_window_button(self, info: WindowInfo) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("window-button")
@@ -828,6 +979,8 @@ class AiBarWindow(Gtk.Window):
             image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.DIALOG)
             image.set_pixel_size(24)
             inner.pack_start(image, False, False, 0)
+            if target == "url":
+                self._apply_favicon(image, str(button_config.get("url", "")))
 
         label = Gtk.Label(label=str(button_config.get("label", "")))
         label.set_ellipsize(Pango.EllipsizeMode.END)
@@ -856,7 +1009,18 @@ class AiBarWindow(Gtk.Window):
         if button_config.get("action") == "reload":
             button.connect("clicked", lambda _button: self._reload())
         else:
-            button.connect("clicked", lambda _button: self._launch(button_config["command"]))
+            command = button_config["command"]
+            action = system_session_action(command)
+            if action is not None:
+                button.connect(
+                    "clicked",
+                    lambda _button: self._launch_session_action(action),
+                )
+            else:
+                button.connect(
+                    "clicked",
+                    lambda _button: self._launch_session_command(command),
+                )
 
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         inner.set_halign(Gtk.Align.CENTER)
@@ -887,6 +1051,7 @@ class AiBarWindow(Gtk.Window):
         terminal.set_hexpand(True)
         terminal.set_vexpand(True)
         terminal.set_scrollback_lines(int(terminal_config.get("scrollback_lines", 10000)))
+        terminal.connect("button-press-event", self._on_content_click)
         terminal.connect("button-press-event", self._on_terminal_button_press)
         terminal.connect("key-press-event", self._on_terminal_key_press)
 
@@ -1028,6 +1193,34 @@ class AiBarWindow(Gtk.Window):
     def _change_webview_zoom(self, webview: Any, delta: float) -> None:
         current_zoom = float(webview.get_zoom_level())
         webview.set_zoom_level(max(0.25, min(3.0, current_zoom + delta)))
+
+    def _webview_acceleration_policy(self) -> Any:
+        # Il default e' "never": su driver dove l'allocazione del buffer GBM
+        # fallisce (NVIDIA proprietario) WebKit non ripiega da solo e la scheda
+        # resta semplicemente vuota, con "Failed to create GBM buffer" nel log
+        # di sessione e nulla nell'interfaccia. Il costo del rendering software
+        # su una vista larga quanto un pannello e' modesto, mentre quel guasto
+        # e' invisibile e totale. Chi ha una scheda a posto rimette il
+        # comportamento originale di WebKit con "on-demand".
+        wanted = self.config.get("webview", {}).get("hardware_acceleration", "never")
+        policies = {
+            "never": WebKit2.HardwareAccelerationPolicy.NEVER,
+            "on-demand": WebKit2.HardwareAccelerationPolicy.ON_DEMAND,
+            "always": WebKit2.HardwareAccelerationPolicy.ALWAYS,
+        }
+        return policies.get(wanted, WebKit2.HardwareAccelerationPolicy.NEVER)
+
+    def _on_content_click(self, widget: Gtk.Widget, _event: Gdk.EventButton) -> bool:
+        # Il pannello e' una finestra di tipo DOCK, e i window manager non danno
+        # il focus da tastiera a un dock quando ci si clicca dentro: il mouse
+        # arriva (i pulsanti reagiscono) ma i campi di testo restano muti.
+        # Chiederlo esplicitamente al primo clic ricrea il comportamento di una
+        # finestra normale. Si ritorna False perche' il clic deve comunque
+        # arrivare al contenuto.
+        if not self.is_active():
+            self.present()
+            widget.grab_focus()
+        return False
 
     def _build_terminal_menu(self, terminal: Vte.Terminal) -> Gtk.Menu:
         menu = Gtk.Menu()
@@ -1315,6 +1508,85 @@ class AiBarWindow(Gtk.Window):
 
             GLib.timeout_add(LAUNCH_MAXIMIZE_INTERVAL_MS, maximize_when_ready)
 
+    def _launch_session_command(self, command: str | list[str]) -> None:
+        threading.Thread(
+            target=self._run_session_command,
+            args=(command,),
+            daemon=True,
+        ).start()
+
+    def _run_session_command(self, command: str | list[str]) -> None:
+        try:
+            completed = subprocess.run(
+                command,
+                shell=isinstance(command, str),
+                capture_output=True,
+                text=True,
+                start_new_session=True,
+            )
+        except Exception as exc:
+            GLib.idle_add(self._show_error, f"Comando non avviato: {command}\n{exc}")
+            return
+
+        if completed.returncode != 0:
+            message = (
+                f"Comando non riuscito ({completed.returncode}): "
+                f"{command_to_shell_line(command)}"
+            )
+            detail = (completed.stderr or completed.stdout or "").strip()
+            if detail:
+                message += f"\n{detail}"
+            GLib.idle_add(self._show_error, message)
+
+    def _launch_session_action(self, action: str) -> None:
+        threading.Thread(
+            target=self._run_session_action,
+            args=(action,),
+            daemon=True,
+        ).start()
+
+    def _run_session_action(self, action: str) -> None:
+        try:
+            supervisor_pid = int(os.environ["AI_BAR_SESSION_SUPERVISOR_PID"])
+            result_path = Path(os.environ["AI_BAR_SESSION_RESULT"])
+            result_dir = Path(os.environ["AI_BAR_SESSION_RESULT_DIR"])
+        except (KeyError, ValueError):
+            self._run_session_command(["/usr/bin/systemctl", action])
+            return
+
+        if (
+            os.getppid() != supervisor_pid
+            or result_path.parent != result_dir
+            or not result_path.name.startswith("ai-bar-session-result-")
+        ):
+            self._run_session_command(["/usr/bin/systemctl", action])
+            return
+
+        try:
+            result_path.unlink(missing_ok=True)
+            requested_signal = signal.SIGUSR1 if action == "reboot" else signal.SIGUSR2
+            os.kill(supervisor_pid, requested_signal)
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not result_path.is_file():
+                time.sleep(0.05)
+            response = result_path.read_text(encoding="utf-8")
+            result_path.unlink(missing_ok=True)
+            status_text, _, detail = response.partition("\n")
+            status = int(status_text)
+        except Exception as exc:
+            GLib.idle_add(
+                self._show_error,
+                f"Comando non avviato: systemctl {action}\n{exc}",
+            )
+            return
+
+        if status != 0:
+            message = f"Comando non riuscito ({status}): systemctl {action}"
+            if detail.strip():
+                message += f"\n{detail.strip()}"
+            GLib.idle_add(self._show_error, message)
+
     def _switch_terminal(self, command: str | list[str], label: str | None = None) -> None:
         if self.terminal_notebook is None:
             self._show_error("Terminale non disponibile.")
@@ -1428,13 +1700,38 @@ class AiBarWindow(Gtk.Window):
 
         widget = self.embedded.get(key)
         if widget is None:
-            webview = WebKit2.WebView.new_with_context(self.web_context or WebKit2.WebContext.get_default())
+            manager = WebKit2.UserContentManager()
+            manager.register_script_message_handler("aiBarLogin")
+            manager.connect(
+                "script-message-received::aiBarLogin",
+                lambda _manager, result: self._on_login_submitted(
+                    url, script_message_text(result)),
+            )
+            manager.add_script(WebKit2.UserScript.new(
+                LOGIN_CAPTURE_JS,
+                WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.END,
+                None, None,
+            ))
+            webview = WebKit2.WebView(
+                web_context=self.web_context or WebKit2.WebContext.get_default(),
+                user_content_manager=manager,
+            )
             webview.set_hexpand(True)
             webview.set_vexpand(True)
+            settings = webview.get_settings()
+            settings.set_hardware_acceleration_policy(
+                self._webview_acceleration_policy())
+            webview.set_settings(settings)
             webview.connect("key-press-event", self._on_webview_key_press)
+            webview.connect("button-press-event", self._on_content_click)
             webview.load_uri(url)
             widget = webview
             self.embedded[key] = webview
+            # Il segnale del database scatta solo la prima volta che il sito
+            # viene visto: l'apertura della scheda e' l'altra occasione buona
+            # per andare a cercare l'icona.
+            webview.connect("load-changed", self._on_web_load_changed, url)
             page = self.terminal_notebook.append_page(
                 webview,
                 Gtk.Label(label=label or "Web"),
@@ -1554,6 +1851,206 @@ class AiBarWindow(Gtk.Window):
                 style.add_class("detached-launcher")
             else:
                 style.remove_class("detached-launcher")
+
+    def _on_web_load_changed(self, view: Any, event: Any, url: str) -> None:
+        if event != WebKit2.LoadEvent.FINISHED:
+            return
+        self._fill_login(view, url)
+        image = self.favicon_targets.get(url)
+        if image is not None:
+            self._apply_favicon(image, url, view.get_uri())
+
+    def _show_favicon(self, image: Gtk.Image, pixbuf: Any, url: str) -> None:
+        scaled = pixbuf.scale_simple(
+            FAVICON_SIZE, FAVICON_SIZE, GdkPixbuf.InterpType.BILINEAR)
+        if scaled is None:
+            return
+        image.set_from_pixbuf(scaled)
+        cached = favicon_cache_path(url)
+        try:
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            scaled.savev(str(cached), "png", [], [])
+        except Exception as exc:
+            print(f"ai-bar: favicon non salvata: {exc}", file=sys.stderr)
+
+    def _apply_favicon(self, image: Gtk.Image, url: str,
+                       page_uri: str | None = None,
+                       icon_uri: str | None = None) -> None:
+        if WebKit2 is None or not url:
+            return
+        self.favicon_targets[url] = image
+
+        cached = favicon_cache_path(url)
+        if cached.exists():
+            try:
+                image.set_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file(str(cached)))
+            except Exception:
+                pass
+
+        database = (self.web_context
+                    or WebKit2.WebContext.get_default()).get_favicon_database()
+
+        def done(db: Any, result: Any, _data: Any) -> None:
+            surface = None
+            try:
+                surface = db.get_favicon_finish(result)
+            except Exception:
+                # Sito mai aperto, senza favicon, oppure in un formato che
+                # WebKit non sa decodificare: gli SVG finiscono tutti qui.
+                surface = None
+            pixbuf = None
+            if surface is not None:
+                pixbuf = Gdk.pixbuf_get_from_surface(
+                    surface, 0, 0, surface.get_width(), surface.get_height())
+            if pixbuf is None:
+                target = icon_uri
+                if not target:
+                    try:
+                        target = db.get_favicon_uri(page_uri or url)
+                    except Exception:
+                        target = None
+                self._download_favicon(image, url, target)
+                return
+            self._show_favicon(image, pixbuf, url)
+
+        database.get_favicon(page_uri or url, None, done, None)
+
+    def _download_favicon(self, image: Gtk.Image, url: str,
+                          icon_uri: str | None) -> None:
+        # Anche quando non la decodifica, WebKit ci dice dov'e' l'icona.
+        # GdkPixbuf, che si appoggia a librsvg, di solito ce la fa.
+        if not icon_uri or icon_uri in self.favicon_fetched:
+            return
+        # Si scarica solo dal sito configurato, e solo via http(s).
+        if not same_origin(icon_uri, url):
+            return
+        self.favicon_fetched.add(icon_uri)
+
+        def fetch() -> None:
+            try:
+                with urllib.request.urlopen(
+                        icon_uri, timeout=FAVICON_TIMEOUT_SECONDS) as response:
+                    data = response.read(FAVICON_MAX_BYTES)
+                loader = GdkPixbuf.PixbufLoader()
+                loader.set_size(FAVICON_SIZE, FAVICON_SIZE)
+                loader.write(data)
+                loader.close()
+                pixbuf = loader.get_pixbuf()
+            except Exception as exc:
+                print(f"ai-bar: favicon non scaricata: {exc}", file=sys.stderr)
+                return
+            if pixbuf is not None:
+                GLib.idle_add(self._show_favicon, image, pixbuf, url)
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _on_favicon_changed(self, _database: Any, page_uri: str,
+                            icon_uri: str) -> None:
+        # L'icona arriva per la pagina effettiva: al primo giro l'indirizzo
+        # configurato non basta, perche' il login sta su un percorso diverso.
+        # Si confronta quindi l'origine.
+        for url, image in list(self.favicon_targets.items()):
+            if same_origin(page_uri, url):
+                self._apply_favicon(image, url, page_uri, icon_uri)
+
+    def _secret_schema(self) -> Any | None:
+        if Secret is None:
+            return None
+        return Secret.Schema.new(
+            "net.aibar.webview",
+            Secret.SchemaFlags.NONE,
+            {"application": Secret.SchemaAttributeType.STRING,
+             "url": Secret.SchemaAttributeType.STRING,
+             "username": Secret.SchemaAttributeType.STRING},
+        )
+
+    def _web_credentials(self, url: str) -> tuple[str, str] | None:
+        # Le credenziali stanno nel portachiavi di sistema, mai nel file di
+        # configurazione. La voce stessa fa da interruttore: se non c'e', la
+        # compilazione automatica semplicemente non avviene.
+        schema = self._secret_schema()
+        if schema is None:
+            return None
+        try:
+            items = Secret.password_search_sync(
+                schema,
+                {"application": "ai-bar", "url": url},
+                Secret.SearchFlags.UNLOCK | Secret.SearchFlags.LOAD_SECRETS,
+                None,
+            )
+            for item in items:
+                username = item.get_attributes().get("username")
+                password = item.retrieve_secret_sync(None)
+                if username and password is not None:
+                    return username, password.get_text()
+        except Exception as exc:
+            print(f"ai-bar: credenziali non leggibili dal portachiavi: {exc}",
+                  file=sys.stderr)
+        return None
+
+    def _fill_login(self, view: Any, url: str) -> None:
+        current = view.get_uri() or ""
+        # Le credenziali vanno consegnate solo all'origine per cui sono state
+        # salvate: dopo un redirect fuori sito riempire il form significherebbe
+        # passare la password a qualcun altro.
+        if not same_origin(current, url):
+            return
+        found = self._web_credentials(url)
+        if found is None:
+            return
+        username, password = found
+        script = LOGIN_FILL_JS % (json.dumps(username), json.dumps(password))
+        try:
+            view.evaluate_javascript(script, -1, None, None, None, None, None)
+        except Exception as exc:
+            print(f"ai-bar: login non compilato: {exc}", file=sys.stderr)
+
+    def _store_credentials(self, url: str, username: str, password: str) -> None:
+        schema = self._secret_schema()
+        if schema is None:
+            return
+        try:
+            Secret.password_store_sync(
+                schema,
+                {"application": "ai-bar", "url": url, "username": username},
+                Secret.COLLECTION_DEFAULT,
+                f"ai-bar {urllib.parse.urlsplit(url).hostname or url}",
+                password,
+                None,
+            )
+        except Exception as exc:
+            print(f"ai-bar: credenziali non salvate: {exc}", file=sys.stderr)
+
+    def _on_login_submitted(self, url: str, payload: str) -> None:
+        try:
+            data = json.loads(payload)
+            username = str(data["username"])
+            password = str(data["password"])
+        except Exception:
+            return
+        if not username or not password:
+            return
+        # Niente domanda se quelle credenziali sono gia' quelle salvate: la
+        # richiesta comparirebbe a ogni accesso.
+        if self._web_credentials(url) == (username, password):
+            return
+
+        host = urllib.parse.urlsplit(url).hostname or url
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Salvare le credenziali di {host} nel portachiavi?",
+        )
+        dialog.format_secondary_text(
+            f"Utente: {username}\nLa password finisce nel portachiavi di "
+            "sistema, non nel file di configurazione."
+        )
+        answer = dialog.run()
+        dialog.destroy()
+        if answer == Gtk.ResponseType.YES:
+            self._store_credentials(url, username, password)
 
     def _reload(self) -> None:
         if self.xapp_tray_host is not None:
@@ -1848,6 +2345,25 @@ def command_to_shell_line(command: str | list[str]) -> str:
     if isinstance(command, str):
         return command
     return " ".join(shlex.quote(part) for part in command)
+
+
+def system_session_action(command: str | list[str]) -> str | None:
+    if not isinstance(command, list):
+        return None
+    if (
+        len(command) == 2
+        and Path(command[0]).name == "systemctl"
+        and command[1] in {"reboot", "poweroff"}
+    ):
+        return command[1]
+    if (
+        len(command) == 3
+        and Path(command[0]).name == "pkexec"
+        and Path(command[1]).name == "systemctl"
+        and command[2] in {"reboot", "poweroff"}
+    ):
+        return command[2]
+    return None
 
 
 def run_text_command(argv: list[str], timeout: float = 2.0) -> str:

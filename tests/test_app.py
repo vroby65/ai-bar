@@ -1,4 +1,6 @@
 import os
+import signal
+import tempfile
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
@@ -20,6 +22,7 @@ from ai_bar.app import (
     X11SuperToggle,
     clean_window_title,
     clock_labels_fit_inline,
+    configuration_assistant_command,
     find_window_by_xid,
     maximize_launched_window,
     centered_position,
@@ -29,6 +32,8 @@ from ai_bar.app import (
     panel_x_for_state,
     webkit_cookie_storage_path,
     launcher_page_key,
+    favicon_cache_path,
+    same_origin,
     set_system_muted,
     set_system_volume,
     terminal_argv,
@@ -43,6 +48,98 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 
 
 class ClockLayoutTests(unittest.TestCase):
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    @patch("ai_bar.app.XEmbedTrayHost")
+    @patch("ai_bar.app.XAppStatusIconHost")
+    def test_configuration_assistant_is_separate_and_before_volume(
+        self,
+        _xapp_host,
+        _xembed_host,
+        _timeout_add,
+    ):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {
+            "panel": {"side": "left"},
+            "tray": {
+                "items": [{"type": "volume"}],
+                "icon_size": 24,
+                "xembed": False,
+                "status_refresh_seconds": 5,
+            },
+        }
+        window.status_labels = []
+        window.volume_controls = []
+        window.tray_host = None
+        window.xapp_tray_host = None
+        window._open_configuration_assistant = Mock()
+
+        status_area = window._build_tray_row()
+
+        status_flow = status_area.get_children()[0]
+        assistant_button, volume_control = [
+            child.get_child() for child in status_flow.get_children()
+        ]
+        self.assertIsInstance(assistant_button, Gtk.Button)
+        self.assertIsInstance(volume_control, Gtk.Box)
+        self.assertNotIn(assistant_button, volume_control.get_children())
+        self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
+        assistant_button.emit("clicked")
+        window._open_configuration_assistant.assert_called_once_with()
+        status_area.destroy()
+
+    def test_configuration_assistant_command_uses_active_config(self):
+        self.assertEqual(
+            configuration_assistant_command(Path("/tmp/ai bar.json")),
+            [
+                os.sys.executable,
+                "-m",
+                "ai_bar.config_assistant",
+                "--config",
+                "/tmp/ai bar.json",
+            ],
+        )
+
+    def test_opening_configuration_assistant_resets_previous_session(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config_path = Path("/tmp/config.json")
+        command = configuration_assistant_command(window.config_path)
+        key = terminal_session_key(command)
+        previous_terminal = Mock()
+        window.terminals = {key: previous_terminal}
+        window.detached = {}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.page_num.return_value = 2
+        window._switch_terminal = Mock()
+
+        window._open_configuration_assistant()
+
+        self.assertNotIn(key, window.terminals)
+        window.terminal_notebook.remove_page.assert_called_once_with(2)
+        previous_terminal.destroy.assert_called_once_with()
+        window._switch_terminal.assert_called_once_with(command, "Configura")
+
+    def test_opening_configuration_assistant_resets_a_detached_session(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config_path = Path("/tmp/config.json")
+        command = configuration_assistant_command(window.config_path)
+        key = terminal_session_key(command)
+        previous_terminal = Mock()
+        detached_window = Mock()
+        detached_window.get_child.return_value = previous_terminal
+        window.terminals = {key: previous_terminal}
+        window.detached = {key: detached_window}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.page_num.return_value = -1
+        window._switch_terminal = Mock()
+
+        window._open_configuration_assistant()
+
+        self.assertNotIn(key, window.detached)
+        detached_window.remove.assert_called_once_with(previous_terminal)
+        detached_window.destroy.assert_called_once_with()
+        previous_terminal.destroy.assert_called_once_with()
+        window._switch_terminal.assert_called_once_with(command, "Configura")
+
     def test_window_button_uses_the_application_icon(self):
         window = AiBarWindow.__new__(AiBarWindow)
         icon = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 16, 16)
@@ -104,6 +201,82 @@ class ClockLayoutTests(unittest.TestCase):
 
         window._switch_webview.assert_called_once_with("https://example.com", "Chat")
         button.destroy()
+
+    def test_legacy_reboot_button_requests_authorization(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch_session_action = Mock()
+        button = window._build_session_button(
+            {
+                "label": "Reboot",
+                "command": ["systemctl", "reboot"],
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch_session_action.assert_called_once_with("reboot")
+        button.destroy()
+
+    def test_legacy_powerdown_button_requests_authorization(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch_session_action = Mock()
+        button = window._build_session_button(
+            {
+                "label": "Powerdown",
+                "command": ["systemctl", "poweroff"],
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch_session_action.assert_called_once_with("poweroff")
+        button.destroy()
+
+    def test_session_action_reports_supervisor_failure(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._show_error = Mock()
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            result_path = Path(temporary_directory) / "ai-bar-session-result-1234"
+
+            def write_failure(_pid, _signal):
+                result_path.write_text("1\nAccess denied\n", encoding="utf-8")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "AI_BAR_SESSION_SUPERVISOR_PID": "1234",
+                        "AI_BAR_SESSION_RESULT": str(result_path),
+                        "AI_BAR_SESSION_RESULT_DIR": temporary_directory,
+                        "XDG_RUNTIME_DIR": temporary_directory,
+                    },
+                ),
+                patch("ai_bar.app.os.getppid", return_value=1234),
+                patch("ai_bar.app.os.kill", side_effect=write_failure) as kill,
+                patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn, *args: fn(*args)),
+            ):
+                window._run_session_action("reboot")
+
+        kill.assert_called_once_with(1234, signal.SIGUSR1)
+        window._show_error.assert_called_once_with(
+            "Comando non riuscito (1): systemctl reboot\nAccess denied"
+        )
+
+    def test_failed_session_command_shows_its_error(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._show_error = Mock()
+        completed = SimpleNamespace(returncode=1, stdout="", stderr="Not authorized\n")
+
+        with (
+            patch("ai_bar.app.subprocess.run", return_value=completed),
+            patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn, *args: fn(*args)),
+        ):
+            window._run_session_command(["pkexec", "/usr/bin/systemctl", "reboot"])
+
+        window._show_error.assert_called_once_with(
+            "Comando non riuscito (1): pkexec /usr/bin/systemctl reboot\nNot authorized"
+        )
 
     def test_webview_ctrl_plus_zooms_in(self):
         window = AiBarWindow.__new__(AiBarWindow)
@@ -180,20 +353,111 @@ class ClockLayoutTests(unittest.TestCase):
     @patch("ai_bar.app.WebKit2")
     def test_url_launcher_reuses_the_shared_webkit_context(self, webkit2):
         webview = Mock()
-        webkit2.WebView.new_with_context.return_value = webview
+        webkit2.WebView.return_value = webview
         context = Mock()
 
         window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {}
         window.web_context = context
+        window.embedded = {}
+        window.detached = {}
+        window.favicon_targets = {}
+        window.terminal_notebook = Mock()
+        window.present = Mock()
+        window._switch_webview("https://example.com", "Chat")
+
+        # La vista si costruisce per proprieta' e non con new_with_context,
+        # perche' il gestore dei contenuti si puo' passare solo alla nascita.
+        # Cio' che conta resta il contesto condiviso: e' quello che tiene i
+        # cookie, e senza di lui ogni scheda ripartirebbe dal login.
+        webkit2.WebView.assert_called_once()
+        self.assertIs(webkit2.WebView.call_args.kwargs["web_context"], context)
+        webview.load_uri.assert_called_once_with("https://example.com")
+        window.terminal_notebook.append_page.assert_called_once()
+
+    @patch("ai_bar.app.WebKit2")
+    def test_url_launcher_renders_without_accelerated_compositing(self, webkit2):
+        # Su driver dove l'allocazione del buffer GBM fallisce WebKit non
+        # ripiega da solo: la scheda resta vuota invece di rendere in software.
+        webview = Mock()
+        settings = Mock()
+        webview.get_settings.return_value = settings
+        webkit2.WebView.return_value = webview
+
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {}
+        window.web_context = Mock()
         window.embedded = {}
         window.detached = {}
         window.terminal_notebook = Mock()
         window.present = Mock()
         window._switch_webview("https://example.com", "Chat")
 
-        webkit2.WebView.new_with_context.assert_called_once_with(context)
-        webview.load_uri.assert_called_once_with("https://example.com")
-        window.terminal_notebook.append_page.assert_called_once()
+        settings.set_hardware_acceleration_policy.assert_called_once_with(
+            webkit2.HardwareAccelerationPolicy.NEVER
+        )
+        webview.set_settings.assert_called_once_with(settings)
+
+    @patch("ai_bar.app.WebKit2")
+    def test_the_acceleration_policy_can_be_configured(self, webkit2):
+        # Chi ha una scheda che funziona rimette il comportamento originale di
+        # WebKit senza toccare il codice.
+        for wanted, expected in (
+            ("never", "NEVER"),
+            ("on-demand", "ON_DEMAND"),
+            ("always", "ALWAYS"),
+        ):
+            with self.subTest(wanted=wanted):
+                webview = Mock()
+                settings = Mock()
+                webview.get_settings.return_value = settings
+                webkit2.WebView.return_value = webview
+
+                window = AiBarWindow.__new__(AiBarWindow)
+                window.config = {"webview": {"hardware_acceleration": wanted}}
+                window.web_context = Mock()
+                window.embedded = {}
+                window.detached = {}
+                window.terminal_notebook = Mock()
+                window.present = Mock()
+                window._switch_webview("https://example.com", "Chat")
+
+                settings.set_hardware_acceleration_policy.assert_called_once_with(
+                    getattr(webkit2.HardwareAccelerationPolicy, expected)
+                )
+
+    @patch("ai_bar.app.WebKit2")
+    def test_an_unset_acceleration_policy_stays_off(self, webkit2):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {}
+
+        self.assertIs(window._webview_acceleration_policy(),
+                      webkit2.HardwareAccelerationPolicy.NEVER)
+
+    def test_a_click_on_the_content_asks_for_keyboard_focus(self):
+        # Il pannello e' un DOCK: senza richiesta esplicita i campi di testo
+        # restano non editabili finche' non si cambia scheda.
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.is_active = Mock(return_value=False)
+        window.present = Mock()
+        widget = Mock()
+
+        handled = window._on_content_click(widget, Mock())
+
+        window.present.assert_called_once()
+        widget.grab_focus.assert_called_once()
+        # False: il clic deve comunque arrivare al contenuto.
+        self.assertFalse(handled)
+
+    def test_a_click_on_the_content_leaves_an_active_panel_alone(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.is_active = Mock(return_value=True)
+        window.present = Mock()
+        widget = Mock()
+
+        self.assertFalse(window._on_content_click(widget, Mock()))
+        window.present.assert_not_called()
+        widget.grab_focus.assert_not_called()
 
     def test_maximize_launched_window_ignores_windows_present_before_launch(self):
         class Window:
@@ -1010,6 +1274,181 @@ class DetachTests(unittest.TestCase):
         self.assertEqual(notebook.get_tab_label_text(page), "Claude")
 
 
+class FaviconTests(unittest.TestCase):
+    def _window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.favicon_targets = {}
+        window.favicon_fetched = set()
+        return window
+
+    def test_same_origin_accepts_the_same_site(self):
+        self.assertTrue(same_origin("https://www.example.net/app/login.php",
+                                    "https://www.example.net/app/"))
+
+    def test_same_origin_rejects_a_different_host_or_scheme(self):
+        self.assertFalse(same_origin("https://evil.example.com/icon.svg",
+                                     "https://www.example.net/app/"))
+        self.assertFalse(same_origin("http://www.example.net/app/",
+                                     "https://www.example.net/app/"))
+        self.assertFalse(same_origin("https://www.example.net:8443/app/",
+                                     "https://www.example.net/app/"))
+
+    def test_same_origin_rejects_junk(self):
+        for value in ("", "about:blank", "not a url"):
+            with self.subTest(value=value):
+                self.assertFalse(same_origin(value, "https://www.example.net/app/"))
+
+    def test_cache_path_is_stable_and_specific_to_the_site(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"XDG_DATA_HOME": directory}):
+                first = favicon_cache_path("https://a.example.net/")
+                again = favicon_cache_path("https://a.example.net/")
+                other = favicon_cache_path("https://b.example.net/")
+
+        self.assertEqual(first, again)
+        self.assertNotEqual(first, other)
+        self.assertEqual(first.suffix, ".png")
+        self.assertEqual(first.parent.name, "icons")
+
+    def test_download_refuses_an_icon_from_another_origin(self):
+        # L'indirizzo dell'icona arriva dalla pagina: dopo un redirect altrove
+        # non deve diventare una richiesta verso un sito qualsiasi.
+        window = self._window()
+
+        with patch("ai_bar.app.threading.Thread") as thread:
+            window._download_favicon(Mock(), "https://www.example.net/app/",
+                                     "https://evil.example.com/icon.svg")
+
+        thread.assert_not_called()
+        self.assertEqual(window.favicon_fetched, set())
+
+    def test_download_happens_once_per_icon(self):
+        # favicon-changed puo' ripetersi a ogni caricamento della pagina.
+        window = self._window()
+        icon = "https://www.example.net/favicon.svg"
+
+        with patch("ai_bar.app.threading.Thread") as thread:
+            for _ in range(3):
+                window._download_favicon(Mock(), "https://www.example.net/app/", icon)
+
+        self.assertEqual(thread.call_count, 1)
+        self.assertEqual(window.favicon_fetched, {icon})
+
+    def test_download_ignores_a_missing_icon_address(self):
+        window = self._window()
+
+        with patch("ai_bar.app.threading.Thread") as thread:
+            window._download_favicon(Mock(), "https://www.example.net/app/", None)
+
+        thread.assert_not_called()
+
+    def test_a_changed_favicon_reaches_the_button_of_the_same_site(self):
+        # La pagina che porta l'icona e' quella effettiva (il login sta spesso
+        # altrove): conta l'origine, non l'indirizzo esatto.
+        window = self._window()
+        window._apply_favicon = Mock()
+        image = Mock()
+        window.favicon_targets["https://www.example.net/app/"] = image
+
+        window._on_favicon_changed(None, "https://www.example.net/app/login.php",
+                                   "https://www.example.net/favicon.svg")
+        window._apply_favicon.assert_called_once_with(
+            image, "https://www.example.net/app/",
+            "https://www.example.net/app/login.php",
+            "https://www.example.net/favicon.svg")
+
+        window._apply_favicon.reset_mock()
+        window._on_favicon_changed(None, "https://other.example.com/",
+                                   "https://other.example.com/favicon.ico")
+        window._apply_favicon.assert_not_called()
+
+
+class KeyringLoginTests(unittest.TestCase):
+    def _window(self, credentials=None):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._web_credentials = Mock(return_value=credentials)
+        return window
+
+    def test_login_is_filled_on_the_site_it_was_saved_for(self):
+        window = self._window(("ada", "hunter2"))
+        view = Mock()
+        view.get_uri.return_value = "https://www.example.net/app/login.php"
+
+        window._fill_login(view, "https://www.example.net/app/")
+
+        view.evaluate_javascript.assert_called_once()
+        script = view.evaluate_javascript.call_args.args[0]
+        self.assertIn('"ada"', script)
+
+    def test_login_is_not_filled_after_a_redirect_elsewhere(self):
+        # Il caso che conta: riempire il form su un'altra origine vorrebbe dire
+        # consegnare la password a qualcun altro.
+        window = self._window(("ada", "hunter2"))
+        view = Mock()
+        view.get_uri.return_value = "https://evil.example.com/login"
+
+        window._fill_login(view, "https://www.example.net/app/")
+
+        view.evaluate_javascript.assert_not_called()
+
+    def test_nothing_is_filled_without_a_stored_login(self):
+        # La voce nel portachiavi fa da interruttore: senza, la compilazione
+        # automatica semplicemente non avviene.
+        window = self._window(None)
+        view = Mock()
+        view.get_uri.return_value = "https://www.example.net/app/"
+
+        window._fill_login(view, "https://www.example.net/app/")
+
+        view.evaluate_javascript.assert_not_called()
+
+    def test_a_submitted_login_is_offered_for_saving(self):
+        window = self._window(None)
+        window._store_credentials = Mock()
+        with patch("ai_bar.app.Gtk.MessageDialog") as dialog_class:
+            dialog = dialog_class.return_value
+            dialog.run.return_value = Gtk.ResponseType.YES
+            window._on_login_submitted(
+                "https://www.example.net/app/",
+                '{"username": "ada", "password": "hunter2"}')
+
+        window._store_credentials.assert_called_once_with(
+            "https://www.example.net/app/", "ada", "hunter2")
+
+    def test_a_refused_login_is_not_stored(self):
+        window = self._window(None)
+        window._store_credentials = Mock()
+        with patch("ai_bar.app.Gtk.MessageDialog") as dialog_class:
+            dialog_class.return_value.run.return_value = Gtk.ResponseType.NO
+            window._on_login_submitted(
+                "https://www.example.net/app/",
+                '{"username": "ada", "password": "hunter2"}')
+
+        window._store_credentials.assert_not_called()
+
+    def test_an_unchanged_login_is_not_asked_about_again(self):
+        # Senza questo la domanda tornerebbe a ogni accesso.
+        window = self._window(("ada", "hunter2"))
+        window._store_credentials = Mock()
+        with patch("ai_bar.app.Gtk.MessageDialog") as dialog_class:
+            window._on_login_submitted(
+                "https://www.example.net/app/",
+                '{"username": "ada", "password": "hunter2"}')
+
+        dialog_class.assert_not_called()
+        window._store_credentials.assert_not_called()
+
+    def test_an_incomplete_submission_is_ignored(self):
+        window = self._window(None)
+        window._store_credentials = Mock()
+        with patch("ai_bar.app.Gtk.MessageDialog") as dialog_class:
+            for payload in ("", "not json", "{}",
+                            '{"username": "ada", "password": ""}'):
+                with self.subTest(payload=payload):
+                    window._on_login_submitted("https://www.example.net/app/", payload)
+
+        dialog_class.assert_not_called()
+        window._store_credentials.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
