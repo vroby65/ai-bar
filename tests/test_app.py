@@ -96,6 +96,24 @@ class ClockLayoutTests(unittest.TestCase):
             ],
         )
 
+    def test_opening_configuration_assistant_resets_previous_session(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config_path = Path("/tmp/config.json")
+        command = configuration_assistant_command(window.config_path)
+        key = terminal_session_key(command)
+        previous_terminal = Mock()
+        window.terminals = {key: previous_terminal}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.page_num.return_value = 2
+        window._switch_terminal = Mock()
+
+        window._open_configuration_assistant()
+
+        self.assertNotIn(key, window.terminals)
+        window.terminal_notebook.remove_page.assert_called_once_with(2)
+        previous_terminal.destroy.assert_called_once_with()
+        window._switch_terminal.assert_called_once_with(command, "Configura")
+
     def test_window_button_uses_the_application_icon(self):
         window = AiBarWindow.__new__(AiBarWindow)
         icon = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 16, 16)

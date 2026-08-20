@@ -96,6 +96,7 @@ class ConfigAssistantTests(unittest.TestCase):
             root = Path(directory)
             config_path = root / "config.json"
             preferences_path = root / "assistant.json"
+            preferences_path.write_text('{"command": "codex"}\n', encoding="utf-8")
             execvp = Mock()
 
             with patch.dict("os.environ", {"VISUAL": "nano -w"}, clear=True):
@@ -113,7 +114,7 @@ class ConfigAssistantTests(unittest.TestCase):
             execvp.assert_called_once_with("nano", ["nano", "-w", str(config_path)])
             self.assertEqual(
                 json.loads(preferences_path.read_text(encoding="utf-8")),
-                {"command": "edit"},
+                {"command": "codex"},
             )
 
     def test_run_persists_choice_and_starts_agent_with_instructions(self):

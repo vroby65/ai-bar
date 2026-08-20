@@ -732,8 +732,17 @@ class AiBarWindow(Gtk.Window):
 
     def _open_configuration_assistant(self) -> None:
         config_path = self.config_path or default_config_path()
+        command = configuration_assistant_command(config_path)
+        key = terminal_session_key(command)
+        previous_terminal = self.terminals.pop(key, None)
+        if previous_terminal is not None:
+            if self.terminal_notebook is not None:
+                page = self.terminal_notebook.page_num(previous_terminal)
+                if page >= 0:
+                    self.terminal_notebook.remove_page(page)
+            previous_terminal.destroy()
         self._switch_terminal(
-            configuration_assistant_command(config_path),
+            command,
             "Configura",
         )
 

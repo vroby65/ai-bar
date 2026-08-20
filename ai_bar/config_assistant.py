@@ -152,12 +152,12 @@ def run(
         output=output,
         which=which,
     )
-    save_command(saved_path, command)
     if command == "edit":
         argv = editor_argv(config_path)
         execvp(argv[0], argv)
         return 0
 
+    save_command(saved_path, command)
     print(f"\nAvvio {command}...\n", file=output)
     prompt = assistant_prompt(config_path)
     if command_name(command) in ONE_SHOT_COMMANDS:
