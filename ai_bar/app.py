@@ -483,6 +483,15 @@ button.launcher-button.active-launcher {
   border-color: #63b68e;
 }
 
+button.launcher-button.detached-launcher {
+  border-color: #63b68e;
+  border-style: dashed;
+}
+
+.detach-bar {
+  margin-bottom: 2px;
+}
+
 button.window-button {
   min-height: 30px;
   padding: 4px 7px;
@@ -585,6 +594,8 @@ class AiBarWindow(Gtk.Window):
         self.terminals: dict[str, Vte.Terminal] = {}
         self.embedded: dict[str, Gtk.Widget] = {}
         self.launcher_buttons: dict[str, Gtk.Widget] = {}
+        self.detached: dict[str, Gtk.Window] = {}
+        self.detach_button: Gtk.Widget | None = None
         self.favicon_targets: dict[str, Gtk.Image] = {}
         self.favicon_fetched: set[str] = set()
         self.terminal_notebook: Gtk.Notebook | None = None
@@ -668,6 +679,7 @@ class AiBarWindow(Gtk.Window):
             initial_terminal,
             Gtk.Label(label=terminal_tab_label(initial_command)),
         )
+        content.pack_start(self._build_detach_bar(), False, False, 0)
         content.pack_start(self.terminal_notebook, True, True, 0)
         content.pack_start(self._build_session_buttons(), False, False, 0)
 
@@ -846,6 +858,12 @@ class AiBarWindow(Gtk.Window):
         config_path = self.config_path or default_config_path()
         command = configuration_assistant_command(config_path)
         key = terminal_session_key(command)
+        detached_window = self.detached.pop(key, None)
+        if detached_window is not None:
+            detached_page = detached_window.get_child()
+            if detached_page is not None:
+                detached_window.remove(detached_page)
+            detached_window.destroy()
         previous_terminal = self.terminals.pop(key, None)
         if previous_terminal is not None:
             if self.terminal_notebook is not None:
@@ -1229,18 +1247,17 @@ class AiBarWindow(Gtk.Window):
         if isinstance(page, Vte.Terminal):
             self.terminal = page
         self._highlight_launcher(page)
+        # La pagina arriva come argomento perche' durante switch-page il
+        # notebook non ha ancora aggiornato la propria pagina corrente:
+        # chiederglielo qui darebbe ancora quella di prima.
+        self._refresh_launcher_states(page)
 
     def _highlight_launcher(self, page: Gtk.Widget) -> None:
         # Il bottone dello strumento mostrato resta in evidenza: le schede sono
         # nascoste, quindi senza questo nulla dice quale strumento si sta
         # guardando. La scheda iniziale non ha un bottone, e in quel caso
         # nessuno resta acceso.
-        shown = None
-        for pages in (self.terminals, self.embedded):
-            for key, widget in pages.items():
-                if widget is page:
-                    shown = key
-                    break
+        shown = self._page_key(page)
         for key, button in self.launcher_buttons.items():
             style = button.get_style_context()
             if key == shown:
@@ -1576,6 +1593,14 @@ class AiBarWindow(Gtk.Window):
             return
 
         key = terminal_session_key(command)
+        # Se e' stato staccato, il suo posto non e' piu' nel notebook: senza
+        # questo, page_num tornerebbe -1 e set_current_page(-1) selezionerebbe
+        # l'ultima scheda invece di dirlo.
+        detached = self.detached.get(key)
+        if detached is not None:
+            detached.present()
+            return
+
         terminal = self.terminals.get(key)
         if terminal is None:
             terminal = self._build_terminal(command, width_px=self.panel_width)
@@ -1665,6 +1690,14 @@ class AiBarWindow(Gtk.Window):
             return
 
         key = "url:" + url
+        # Se e' stato staccato, il suo posto non e' piu' nel notebook: senza
+        # questo, page_num tornerebbe -1 e set_current_page(-1) selezionerebbe
+        # l'ultima scheda invece di dirlo.
+        detached = self.detached.get(key)
+        if detached is not None:
+            detached.present()
+            return
+
         widget = self.embedded.get(key)
         if widget is None:
             manager = WebKit2.UserContentManager()
@@ -1709,6 +1742,115 @@ class AiBarWindow(Gtk.Window):
         self.terminal_notebook.set_current_page(page)
         self.present()
         widget.grab_focus()
+
+    def _build_detach_bar(self) -> Gtk.Widget:
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        bar.get_style_context().add_class("detach-bar")
+        button = Gtk.Button()
+        button.get_style_context().add_class("detach-button")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text("Stacca in una finestra sul monitor principale")
+        button.add(Gtk.Image.new_from_icon_name(
+            "window-new-symbolic", Gtk.IconSize.MENU))
+        button.connect("clicked", lambda _button: self._detach_current_page())
+        button.set_sensitive(False)
+        bar.pack_end(button, False, False, 0)
+        self.detach_button = button
+        return bar
+
+    def _detachable_page(self, page: Gtk.Widget | None) -> bool:
+        # Le finestre incorporate con Gtk.Socket sono escluse: staccarle vuol
+        # dire smontare l'incorporamento, e il programma ospite ne soffre.
+        # Tutto il resto si stacca, scheda iniziale compresa.
+        if page is None:
+            return False
+        return not isinstance(page, Gtk.Socket)
+
+    def _page_key(self, page: Gtk.Widget) -> str | None:
+        for pages in (self.terminals, self.embedded):
+            for key, widget in pages.items():
+                if widget is page:
+                    return key
+        return None
+
+    def _detach_current_page(self) -> None:
+        notebook = self.terminal_notebook
+        if notebook is None:
+            return
+        index = notebook.get_current_page()
+        page = notebook.get_nth_page(index) if index >= 0 else None
+        if not self._detachable_page(page):
+            return
+        key = self._page_key(page)
+        if key is None or key in self.detached:
+            return
+
+        title = notebook.get_tab_label_text(page) or "ai-bar"
+        notebook.remove(page)
+
+        window = Gtk.Window(title=f"{title} \u2014 ai-bar")
+        window.set_default_size(900, 700)
+        window.add(page)
+        window.connect("delete-event", self._on_detached_closed, key)
+        self.detached[key] = window
+        window.show_all()
+        self._place_detached(window)
+
+        # Si torna alla prima scheda rimasta. Se non ne resta nessuna l'area
+        # resta vuota, che e' la verita': quel contenuto ora sta in una
+        # finestra. Fabbricare una scheda di rimpiazzo la renderebbe
+        # irraggiungibile, perche' le linguette sono nascoste e a una scheda
+        # ci si arriva solo dal pulsante che la possiede.
+        if notebook.get_n_pages() > 0:
+            notebook.set_current_page(0)
+        self._refresh_launcher_states()
+
+    def _place_detached(self, window: Gtk.Window) -> None:
+        # Stessa scelta dei programmi lanciati dai bottoni: il monitor del
+        # pannello e' quello che si voleva liberare.
+        area = self._launch_area()
+        if area is None:
+            return
+        width, height = window.get_size()
+        x, y = centered_position(area, width, height)
+        window.move(x, y)
+
+    def _on_detached_closed(self, window: Gtk.Window, _event: Any, key: str) -> bool:
+        # La vista rientra nel pannello invece di morire: chiudere una finestra
+        # non deve costare una sessione di lavoro. Si ritorna True perche' la
+        # finestra la distruggiamo noi, dopo aver messo al sicuro il contenuto.
+        self._reattach(key, window)
+        return True
+
+    def _reattach(self, key: str, window: Gtk.Window) -> None:
+        notebook = self.terminal_notebook
+        page = window.get_child()
+        self.detached.pop(key, None)
+        if page is not None:
+            window.remove(page)
+        window.destroy()
+        if notebook is None or page is None:
+            return
+        title = (window.get_title() or "").removesuffix(" \u2014 ai-bar")
+        index = notebook.append_page(page, Gtk.Label(label=title or "Scheda"))
+        page.show_all()
+        notebook.set_current_page(index)
+        self.present()
+        self._refresh_launcher_states()
+
+    def _refresh_launcher_states(self, page: Gtk.Widget | None = None) -> None:
+        notebook = self.terminal_notebook
+        if page is None and notebook is not None:
+            index = notebook.get_current_page()
+            page = notebook.get_nth_page(index) if index >= 0 else None
+        if self.detach_button is not None:
+            self.detach_button.set_sensitive(self._detachable_page(page))
+        for key, button in self.launcher_buttons.items():
+            style = button.get_style_context()
+            if key in self.detached:
+                style.add_class("detached-launcher")
+            else:
+                style.remove_class("detached-launcher")
 
     def _on_web_load_changed(self, view: Any, event: Any, url: str) -> None:
         if event != WebKit2.LoadEvent.FINISHED:
