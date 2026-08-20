@@ -11,7 +11,7 @@ A GTK side panel similar to a desktop bar, with the date and time at the top, a 
 Run the script as a regular user, without `sudo`: it requests elevated privileges only to install the system packages and session. The installer:
 
 - installs the dependencies on Debian, Ubuntu, or Linux Mint
-- installs the `ai-bar` command with `pipx`
+- installs the `ai-bar` command with `pipx` in editable mode
 - creates `~/.config/ai-bar/config.json` if it does not exist
 - installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
 - installs the `AI Bar Openbox` session for the login manager
@@ -30,6 +30,8 @@ To run it directly from the checkout during development:
 ```bash
 python3 -m ai_bar --config config.example.json
 ```
+
+The editable installation loads Python code directly from this checkout. After a code change, use the `Reload` button to test it without running the installer again.
 
 ## Configuration
 
@@ -52,6 +54,8 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `terminal.command`: shell or command to open in the embedded terminal
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
+The button at the left of the volume control opens the configuration assistant in the embedded terminal. It asks directly for the agent command, remembers it in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`), and offers it as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
+
 The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. `window` and `url` buttons work the same way: the app or web app is embedded in its own tab and keeps running while you switch to another tab. Web apps keep cookies and site data across restarts, and while a web tab is active you can use `Ctrl++` or `Ctrl+=` to zoom in and `Ctrl+-` to zoom out. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
 
 Embedding GUI programs (`target: "window"`) re-parents the program's first window into the panel using `Gtk.Socket` and libwnck. It is best effort: single-window GTK applications work well, but some programs do not tolerate being embedded (the decoration frame may remain, or the window may stay on the desktop); in that case the launcher still opens the program on the desktop. Web apps (`target: "url"`) require the `gir1.2-webkit2-4.1` package, installed by `install.sh`.
@@ -60,7 +64,7 @@ The embedded tray supports XApp icons and, in X11 sessions, XEmbed icons. Applet
 
 ## LightDM/Openbox session
 
-The session is installed by `install.sh`. Log out of the graphical session, select `AI Bar Openbox` in the LightDM session chooser, and log in. The launcher finds the command installed by `pipx` and uses `~/.config/ai-bar/config.json` without depending on the repository checkout. Window decorations use the bundled `Aura Midnight` Openbox theme, copied to `~/.themes` by the installer; an existing `~/.config/openbox/rc.xml` is left untouched.
+The session is installed by `install.sh`. Log out of the graphical session, select `AI Bar Openbox` in the LightDM session chooser, and log in. The launcher finds the command installed by `pipx`, loads the application code from the repository checkout, and uses `~/.config/ai-bar/config.json`. Keep the checkout in the same path while testing. Window decorations use the bundled `Aura Midnight` Openbox theme, copied to `~/.themes` by the installer; an existing `~/.config/openbox/rc.xml` is left untouched.
 
 ## Verification
 

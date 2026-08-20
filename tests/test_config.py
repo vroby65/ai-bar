@@ -59,6 +59,8 @@ class ConfigTests(unittest.TestCase):
             [button["label"] for button in config["session_buttons"]],
             ["Reload", "Logout", "Reboot", "Powerdown"],
         )
+        self.assertEqual(config["session_buttons"][2]["command"], ["systemctl", "reboot"])
+        self.assertEqual(config["session_buttons"][3]["command"], ["systemctl", "poweroff"])
 
     def test_user_config_overrides_nested_values_without_losing_defaults(self):
         merged = merge_config(

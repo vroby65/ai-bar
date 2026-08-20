@@ -17,6 +17,7 @@ APT_PACKAGES=(
     gir1.2-webkit2-4.1
     python3-xlib
     openbox
+    policykit-1-gnome
     pipx
     pulseaudio-utils
     pavucontrol
@@ -52,7 +53,7 @@ if [ "${#missing_packages[@]}" -gt 0 ]; then
 fi
 
 echo "Installazione del comando ai-bar..."
-pipx install --force --system-site-packages --python /usr/bin/python3 "$PROJECT_DIR"
+pipx install --editable --force --system-site-packages --python /usr/bin/python3 "$PROJECT_DIR"
 
 if [ ! -x "$AI_BAR_BIN" ]; then
     echo "pipx non ha creato il comando atteso: $AI_BAR_BIN" >&2

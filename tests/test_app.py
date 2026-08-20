@@ -1,4 +1,6 @@
 import os
+import signal
+import tempfile
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
@@ -20,6 +22,7 @@ from ai_bar.app import (
     X11SuperToggle,
     clean_window_title,
     clock_labels_fit_inline,
+    configuration_assistant_command,
     find_window_by_xid,
     maximize_launched_window,
     centered_position,
@@ -42,6 +45,57 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 
 
 class ClockLayoutTests(unittest.TestCase):
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    @patch("ai_bar.app.XEmbedTrayHost")
+    @patch("ai_bar.app.XAppStatusIconHost")
+    def test_configuration_assistant_is_separate_and_before_volume(
+        self,
+        _xapp_host,
+        _xembed_host,
+        _timeout_add,
+    ):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {
+            "panel": {"side": "left"},
+            "tray": {
+                "items": [{"type": "volume"}],
+                "icon_size": 24,
+                "xembed": False,
+                "status_refresh_seconds": 5,
+            },
+        }
+        window.status_labels = []
+        window.volume_controls = []
+        window.tray_host = None
+        window.xapp_tray_host = None
+        window._open_configuration_assistant = Mock()
+
+        status_area = window._build_tray_row()
+
+        status_flow = status_area.get_children()[0]
+        assistant_button, volume_control = [
+            child.get_child() for child in status_flow.get_children()
+        ]
+        self.assertIsInstance(assistant_button, Gtk.Button)
+        self.assertIsInstance(volume_control, Gtk.Box)
+        self.assertNotIn(assistant_button, volume_control.get_children())
+        self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
+        assistant_button.emit("clicked")
+        window._open_configuration_assistant.assert_called_once_with()
+        status_area.destroy()
+
+    def test_configuration_assistant_command_uses_active_config(self):
+        self.assertEqual(
+            configuration_assistant_command(Path("/tmp/ai bar.json")),
+            [
+                os.sys.executable,
+                "-m",
+                "ai_bar.config_assistant",
+                "--config",
+                "/tmp/ai bar.json",
+            ],
+        )
+
     def test_window_button_uses_the_application_icon(self):
         window = AiBarWindow.__new__(AiBarWindow)
         icon = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 16, 16)
@@ -101,6 +155,82 @@ class ClockLayoutTests(unittest.TestCase):
 
         window._switch_webview.assert_called_once_with("https://example.com", "Chat")
         button.destroy()
+
+    def test_legacy_reboot_button_requests_authorization(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch_session_action = Mock()
+        button = window._build_session_button(
+            {
+                "label": "Reboot",
+                "command": ["systemctl", "reboot"],
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch_session_action.assert_called_once_with("reboot")
+        button.destroy()
+
+    def test_legacy_powerdown_button_requests_authorization(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch_session_action = Mock()
+        button = window._build_session_button(
+            {
+                "label": "Powerdown",
+                "command": ["systemctl", "poweroff"],
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch_session_action.assert_called_once_with("poweroff")
+        button.destroy()
+
+    def test_session_action_reports_supervisor_failure(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._show_error = Mock()
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            result_path = Path(temporary_directory) / "ai-bar-session-result-1234"
+
+            def write_failure(_pid, _signal):
+                result_path.write_text("1\nAccess denied\n", encoding="utf-8")
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "AI_BAR_SESSION_SUPERVISOR_PID": "1234",
+                        "AI_BAR_SESSION_RESULT": str(result_path),
+                        "AI_BAR_SESSION_RESULT_DIR": temporary_directory,
+                        "XDG_RUNTIME_DIR": temporary_directory,
+                    },
+                ),
+                patch("ai_bar.app.os.getppid", return_value=1234),
+                patch("ai_bar.app.os.kill", side_effect=write_failure) as kill,
+                patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn, *args: fn(*args)),
+            ):
+                window._run_session_action("reboot")
+
+        kill.assert_called_once_with(1234, signal.SIGUSR1)
+        window._show_error.assert_called_once_with(
+            "Comando non riuscito (1): systemctl reboot\nAccess denied"
+        )
+
+    def test_failed_session_command_shows_its_error(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._show_error = Mock()
+        completed = SimpleNamespace(returncode=1, stdout="", stderr="Not authorized\n")
+
+        with (
+            patch("ai_bar.app.subprocess.run", return_value=completed),
+            patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn, *args: fn(*args)),
+        ):
+            window._run_session_command(["pkexec", "/usr/bin/systemctl", "reboot"])
+
+        window._show_error.assert_called_once_with(
+            "Comando non riuscito (1): pkexec /usr/bin/systemctl reboot\nNot authorized"
+        )
 
     def test_webview_ctrl_plus_zooms_in(self):
         window = AiBarWindow.__new__(AiBarWindow)
