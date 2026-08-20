@@ -31,6 +31,8 @@ from ai_bar.app import (
     place_window,
     panel_x_for_state,
     webkit_cookie_storage_path,
+    favicon_cache_path,
+    same_origin,
     set_system_muted,
     set_system_volume,
     terminal_argv,
@@ -1012,6 +1014,95 @@ class ClockLayoutTests(unittest.TestCase):
                     position += step if distance > 0 else -step
                 else:
                     self.fail(f"animation did not converge for panel width {width}")
+
+
+class FaviconTests(unittest.TestCase):
+    def _window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.favicon_targets = {}
+        window.favicon_fetched = set()
+        return window
+
+    def test_same_origin_accepts_the_same_site(self):
+        self.assertTrue(same_origin("https://www.example.net/app/login.php",
+                                    "https://www.example.net/app/"))
+
+    def test_same_origin_rejects_a_different_host_or_scheme(self):
+        self.assertFalse(same_origin("https://evil.example.com/icon.svg",
+                                     "https://www.example.net/app/"))
+        self.assertFalse(same_origin("http://www.example.net/app/",
+                                     "https://www.example.net/app/"))
+        self.assertFalse(same_origin("https://www.example.net:8443/app/",
+                                     "https://www.example.net/app/"))
+
+    def test_same_origin_rejects_junk(self):
+        for value in ("", "about:blank", "not a url"):
+            with self.subTest(value=value):
+                self.assertFalse(same_origin(value, "https://www.example.net/app/"))
+
+    def test_cache_path_is_stable_and_specific_to_the_site(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"XDG_DATA_HOME": directory}):
+                first = favicon_cache_path("https://a.example.net/")
+                again = favicon_cache_path("https://a.example.net/")
+                other = favicon_cache_path("https://b.example.net/")
+
+        self.assertEqual(first, again)
+        self.assertNotEqual(first, other)
+        self.assertEqual(first.suffix, ".png")
+        self.assertEqual(first.parent.name, "icons")
+
+    def test_download_refuses_an_icon_from_another_origin(self):
+        # L'indirizzo dell'icona arriva dalla pagina: dopo un redirect altrove
+        # non deve diventare una richiesta verso un sito qualsiasi.
+        window = self._window()
+
+        with patch("ai_bar.app.threading.Thread") as thread:
+            window._download_favicon(Mock(), "https://www.example.net/app/",
+                                     "https://evil.example.com/icon.svg")
+
+        thread.assert_not_called()
+        self.assertEqual(window.favicon_fetched, set())
+
+    def test_download_happens_once_per_icon(self):
+        # favicon-changed puo' ripetersi a ogni caricamento della pagina.
+        window = self._window()
+        icon = "https://www.example.net/favicon.svg"
+
+        with patch("ai_bar.app.threading.Thread") as thread:
+            for _ in range(3):
+                window._download_favicon(Mock(), "https://www.example.net/app/", icon)
+
+        self.assertEqual(thread.call_count, 1)
+        self.assertEqual(window.favicon_fetched, {icon})
+
+    def test_download_ignores_a_missing_icon_address(self):
+        window = self._window()
+
+        with patch("ai_bar.app.threading.Thread") as thread:
+            window._download_favicon(Mock(), "https://www.example.net/app/", None)
+
+        thread.assert_not_called()
+
+    def test_a_changed_favicon_reaches_the_button_of_the_same_site(self):
+        # La pagina che porta l'icona e' quella effettiva (il login sta spesso
+        # altrove): conta l'origine, non l'indirizzo esatto.
+        window = self._window()
+        window._apply_favicon = Mock()
+        image = Mock()
+        window.favicon_targets["https://www.example.net/app/"] = image
+
+        window._on_favicon_changed(None, "https://www.example.net/app/login.php",
+                                   "https://www.example.net/favicon.svg")
+        window._apply_favicon.assert_called_once_with(
+            image, "https://www.example.net/app/",
+            "https://www.example.net/app/login.php",
+            "https://www.example.net/favicon.svg")
+
+        window._apply_favicon.reset_mock()
+        window._on_favicon_changed(None, "https://other.example.com/",
+                                   "https://other.example.com/favicon.ico")
+        window._apply_favicon.assert_not_called()
 
 
 if __name__ == "__main__":
