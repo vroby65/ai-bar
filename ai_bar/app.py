@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -8,6 +9,8 @@ import shlex
 import subprocess
 import sys
 import threading
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,10 +20,11 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("GdkX11", "3.0")
 gi.require_version("Vte", "2.91")
 
-from gi.repository import Gdk, GdkX11, GLib, Gtk, Pango, Vte
+from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk, Pango, Vte
 
 try:
     gi.require_version("Wnck", "3.0")
@@ -61,6 +65,9 @@ LAUNCH_MAXIMIZE_ATTEMPTS = 50
 EMBED_POLL_INTERVAL_MS = 150
 EMBED_POLL_ATTEMPTS = 60
 WEBVIEW_ZOOM_STEP = 0.1
+FAVICON_SIZE = 24
+FAVICON_TIMEOUT_SECONDS = 5
+FAVICON_MAX_BYTES = 1 << 20
 TERMINAL_FOREGROUND = "#f2f2ee"
 TERMINAL_BACKGROUND = "#151819"
 TERMINAL_PALETTE = (
@@ -120,11 +127,40 @@ def terminal_tab_label(command: str | list[str] | None) -> str:
     return {"ds-code": "DS Code"}.get(name, name.capitalize())
 
 
-def webkit_cookie_storage_path() -> Path:
+def webkit_data_directory() -> Path:
     data_home = os.environ.get("XDG_DATA_HOME")
-    if data_home:
-        return Path(data_home) / "ai-bar" / "webkit" / "cookies.sqlite"
-    return Path.home() / ".local" / "share" / "ai-bar" / "webkit" / "cookies.sqlite"
+    root = Path(data_home) if data_home else Path.home() / ".local" / "share"
+    return root / "ai-bar" / "webkit"
+
+
+def webkit_cookie_storage_path() -> Path:
+    return webkit_data_directory() / "cookies.sqlite"
+
+
+def webkit_favicon_database_directory() -> Path:
+    return webkit_data_directory() / "favicons"
+
+
+def favicon_cache_path(url: str) -> Path:
+    # WebKit ricorda le favicon che sa decodificare, non quelle che scarichiamo
+    # noi: senza questa copia il bottone ripartirebbe con l'icona di riserva a
+    # ogni avvio, fino alla prima apertura del sito.
+    digest = hashlib.sha1(url.encode("utf-8")).hexdigest()
+    return webkit_data_directory() / "icons" / f"button-{digest}.png"
+
+
+def same_origin(first: str, second: str) -> bool:
+    # Confronto schema/host/porta: basta a decidere se una pagina e' ancora
+    # quella per cui le credenziali erano state salvate.
+    try:
+        a, b = urllib.parse.urlsplit(first), urllib.parse.urlsplit(second)
+    except ValueError:
+        return False
+    if not a.scheme or not a.netloc or not b.scheme or not b.netloc:
+        return False
+    return (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
+
+
 
 
 def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
@@ -471,6 +507,8 @@ class AiBarWindow(Gtk.Window):
         self.terminal: Vte.Terminal | None = None
         self.terminals: dict[str, Vte.Terminal] = {}
         self.embedded: dict[str, Gtk.Widget] = {}
+        self.favicon_targets: dict[str, Gtk.Image] = {}
+        self.favicon_fetched: set[str] = set()
         self.terminal_notebook: Gtk.Notebook | None = None
         self.wnck_screen: Any = None
         self.window_flow: Gtk.FlowBox | None = None
@@ -519,6 +557,14 @@ class AiBarWindow(Gtk.Window):
             str(cookie_path),
             WebKit2.CookiePersistentStorage.SQLITE,
         )
+
+        # Il database delle favicon va abilitato prima di qualunque
+        # caricamento, altrimenti le icone non vengono nemmeno registrate.
+        favicon_directory = webkit_favicon_database_directory()
+        favicon_directory.mkdir(parents=True, exist_ok=True)
+        self.web_context.set_favicon_database_directory(str(favicon_directory))
+        self.web_context.get_favicon_database().connect(
+            "favicon-changed", self._on_favicon_changed)
 
     def _build_content(self) -> Gtk.Widget:
         root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -806,6 +852,8 @@ class AiBarWindow(Gtk.Window):
             image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.DIALOG)
             image.set_pixel_size(24)
             inner.pack_start(image, False, False, 0)
+            if target == "url":
+                self._apply_favicon(image, str(button_config.get("url", "")))
 
         label = Gtk.Label(label=str(button_config.get("label", "")))
         label.set_ellipsize(Pango.EllipsizeMode.END)
@@ -1378,6 +1426,10 @@ class AiBarWindow(Gtk.Window):
             webview.load_uri(url)
             widget = webview
             self.embedded[key] = webview
+            # Il segnale del database scatta solo la prima volta che il sito
+            # viene visto: l'apertura della scheda e' l'altra occasione buona
+            # per andare a cercare l'icona.
+            webview.connect("load-changed", self._on_web_load_changed, url)
             page = self.terminal_notebook.append_page(
                 webview,
                 Gtk.Label(label=label or "Web"),
@@ -1388,6 +1440,106 @@ class AiBarWindow(Gtk.Window):
         self.terminal_notebook.set_current_page(page)
         self.present()
         widget.grab_focus()
+
+    def _on_web_load_changed(self, view: Any, event: Any, url: str) -> None:
+        if event != WebKit2.LoadEvent.FINISHED:
+            return
+        image = self.favicon_targets.get(url)
+        if image is not None:
+            self._apply_favicon(image, url, view.get_uri())
+
+    def _show_favicon(self, image: Gtk.Image, pixbuf: Any, url: str) -> None:
+        scaled = pixbuf.scale_simple(
+            FAVICON_SIZE, FAVICON_SIZE, GdkPixbuf.InterpType.BILINEAR)
+        if scaled is None:
+            return
+        image.set_from_pixbuf(scaled)
+        cached = favicon_cache_path(url)
+        try:
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            scaled.savev(str(cached), "png", [], [])
+        except Exception as exc:
+            print(f"ai-bar: favicon non salvata: {exc}", file=sys.stderr)
+
+    def _apply_favicon(self, image: Gtk.Image, url: str,
+                       page_uri: str | None = None,
+                       icon_uri: str | None = None) -> None:
+        if WebKit2 is None or not url:
+            return
+        self.favicon_targets[url] = image
+
+        cached = favicon_cache_path(url)
+        if cached.exists():
+            try:
+                image.set_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file(str(cached)))
+            except Exception:
+                pass
+
+        database = (self.web_context
+                    or WebKit2.WebContext.get_default()).get_favicon_database()
+
+        def done(db: Any, result: Any, _data: Any) -> None:
+            surface = None
+            try:
+                surface = db.get_favicon_finish(result)
+            except Exception:
+                # Sito mai aperto, senza favicon, oppure in un formato che
+                # WebKit non sa decodificare: gli SVG finiscono tutti qui.
+                surface = None
+            pixbuf = None
+            if surface is not None:
+                pixbuf = Gdk.pixbuf_get_from_surface(
+                    surface, 0, 0, surface.get_width(), surface.get_height())
+            if pixbuf is None:
+                target = icon_uri
+                if not target:
+                    try:
+                        target = db.get_favicon_uri(page_uri or url)
+                    except Exception:
+                        target = None
+                self._download_favicon(image, url, target)
+                return
+            self._show_favicon(image, pixbuf, url)
+
+        database.get_favicon(page_uri or url, None, done, None)
+
+    def _download_favicon(self, image: Gtk.Image, url: str,
+                          icon_uri: str | None) -> None:
+        # Anche quando non la decodifica, WebKit ci dice dov'e' l'icona.
+        # GdkPixbuf, che si appoggia a librsvg, di solito ce la fa.
+        if not icon_uri or icon_uri in self.favicon_fetched:
+            return
+        # Si scarica solo dal sito configurato, e solo via http(s).
+        if not same_origin(icon_uri, url):
+            return
+        self.favicon_fetched.add(icon_uri)
+
+        def fetch() -> None:
+            try:
+                with urllib.request.urlopen(
+                        icon_uri, timeout=FAVICON_TIMEOUT_SECONDS) as response:
+                    data = response.read(FAVICON_MAX_BYTES)
+                loader = GdkPixbuf.PixbufLoader()
+                loader.set_size(FAVICON_SIZE, FAVICON_SIZE)
+                loader.write(data)
+                loader.close()
+                pixbuf = loader.get_pixbuf()
+            except Exception as exc:
+                print(f"ai-bar: favicon non scaricata: {exc}", file=sys.stderr)
+                return
+            if pixbuf is not None:
+                GLib.idle_add(self._show_favicon, image, pixbuf, url)
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _on_favicon_changed(self, _database: Any, page_uri: str,
+                            icon_uri: str) -> None:
+        # L'icona arriva per la pagina effettiva: al primo giro l'indirizzo
+        # configurato non basta, perche' il login sta su un percorso diverso.
+        # Si confronta quindi l'origine.
+        for url, image in list(self.favicon_targets.items()):
+            if same_origin(page_uri, url):
+                self._apply_favicon(image, url, page_uri, icon_uri)
 
     def _reload(self) -> None:
         if self.xapp_tray_host is not None:
