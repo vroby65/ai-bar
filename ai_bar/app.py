@@ -865,6 +865,7 @@ class AiBarWindow(Gtk.Window):
         terminal.set_hexpand(True)
         terminal.set_vexpand(True)
         terminal.set_scrollback_lines(int(terminal_config.get("scrollback_lines", 10000)))
+        terminal.connect("button-press-event", self._on_content_click)
         terminal.connect("button-press-event", self._on_terminal_button_press)
         terminal.connect("key-press-event", self._on_terminal_key_press)
 
@@ -1006,6 +1007,18 @@ class AiBarWindow(Gtk.Window):
     def _change_webview_zoom(self, webview: Any, delta: float) -> None:
         current_zoom = float(webview.get_zoom_level())
         webview.set_zoom_level(max(0.25, min(3.0, current_zoom + delta)))
+
+    def _on_content_click(self, widget: Gtk.Widget, _event: Gdk.EventButton) -> bool:
+        # Il pannello e' una finestra di tipo DOCK, e i window manager non danno
+        # il focus da tastiera a un dock quando ci si clicca dentro: il mouse
+        # arriva (i pulsanti reagiscono) ma i campi di testo restano muti.
+        # Chiederlo esplicitamente al primo clic ricrea il comportamento di una
+        # finestra normale. Si ritorna False perche' il clic deve comunque
+        # arrivare al contenuto.
+        if not self.is_active():
+            self.present()
+            widget.grab_focus()
+        return False
 
     def _build_terminal_menu(self, terminal: Vte.Terminal) -> Gtk.Menu:
         menu = Gtk.Menu()
@@ -1374,7 +1387,17 @@ class AiBarWindow(Gtk.Window):
             webview = WebKit2.WebView.new_with_context(self.web_context or WebKit2.WebContext.get_default())
             webview.set_hexpand(True)
             webview.set_vexpand(True)
+            settings = webview.get_settings()
+            # Compositing accelerato disattivato: su driver dove l'allocazione
+            # del buffer GBM fallisce (NVIDIA proprietario) WebKit non ripiega
+            # da solo e la vista resta semplicemente vuota, con "Failed to
+            # create GBM buffer" nel log di sessione. In software rende, e per
+            # una webapp dentro un pannello la differenza non si nota.
+            settings.set_hardware_acceleration_policy(
+                WebKit2.HardwareAccelerationPolicy.NEVER)
+            webview.set_settings(settings)
             webview.connect("key-press-event", self._on_webview_key_press)
+            webview.connect("button-press-event", self._on_content_click)
             webview.load_uri(url)
             widget = webview
             self.embedded[key] = webview
