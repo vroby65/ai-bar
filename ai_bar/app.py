@@ -6,9 +6,11 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -55,7 +57,7 @@ except Exception:  # pragma: no cover - exercised only on systems without python
     record = None
     rq = None
 
-from .config import ConfigError, default_config, load_config
+from .config import ConfigError, default_config, default_config_path, load_config
 from .xapp_tray import XAppStatusIconHost
 from .xembed_tray import XEmbedTrayHost
 
@@ -221,6 +223,16 @@ def same_origin(first: str, second: str) -> bool:
     return (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
 
 
+
+
+def configuration_assistant_command(config_path: Path) -> list[str]:
+    return [
+        sys.executable or "python3",
+        "-m",
+        "ai_bar.config_assistant",
+        "--config",
+        str(config_path.resolve()),
+    ]
 
 
 def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
@@ -696,6 +708,8 @@ class AiBarWindow(Gtk.Window):
         status_flow.set_direction(Gtk.TextDirection.LTR)
 
         for item in self.config.get("tray", {}).get("items", []):
+            if item.get("type") == "volume":
+                self._add_flow_child(status_flow, self._build_configuration_assistant_button())
             self._add_flow_child(status_flow, self._build_status_button(item))
 
         tray_flow = Gtk.FlowBox()
@@ -812,6 +826,31 @@ class AiBarWindow(Gtk.Window):
 
         self.volume_controls.append((scale, label, icon))
         return control
+
+    def _build_configuration_assistant_button(self) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("status-button")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text("Configura AI-bar con un agente")
+        button.add(Gtk.Image.new_from_icon_name("document-edit-symbolic", Gtk.IconSize.MENU))
+        button.connect("clicked", lambda _button: self._open_configuration_assistant())
+        return button
+
+    def _open_configuration_assistant(self) -> None:
+        config_path = self.config_path or default_config_path()
+        command = configuration_assistant_command(config_path)
+        key = terminal_session_key(command)
+        previous_terminal = self.terminals.pop(key, None)
+        if previous_terminal is not None:
+            if self.terminal_notebook is not None:
+                page = self.terminal_notebook.page_num(previous_terminal)
+                if page >= 0:
+                    self.terminal_notebook.remove_page(page)
+            previous_terminal.destroy()
+        self._switch_terminal(
+            command,
+            "Configura",
+        )
 
     def _build_window_button(self, info: WindowInfo) -> Gtk.Widget:
         button = Gtk.Button()
@@ -942,7 +981,18 @@ class AiBarWindow(Gtk.Window):
         if button_config.get("action") == "reload":
             button.connect("clicked", lambda _button: self._reload())
         else:
-            button.connect("clicked", lambda _button: self._launch(button_config["command"]))
+            command = button_config["command"]
+            action = system_session_action(command)
+            if action is not None:
+                button.connect(
+                    "clicked",
+                    lambda _button: self._launch_session_action(action),
+                )
+            else:
+                button.connect(
+                    "clicked",
+                    lambda _button: self._launch_session_command(command),
+                )
 
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         inner.set_halign(Gtk.Align.CENTER)
@@ -973,6 +1023,7 @@ class AiBarWindow(Gtk.Window):
         terminal.set_hexpand(True)
         terminal.set_vexpand(True)
         terminal.set_scrollback_lines(int(terminal_config.get("scrollback_lines", 10000)))
+        terminal.connect("button-press-event", self._on_content_click)
         terminal.connect("button-press-event", self._on_terminal_button_press)
         terminal.connect("key-press-event", self._on_terminal_key_press)
 
@@ -1114,6 +1165,34 @@ class AiBarWindow(Gtk.Window):
     def _change_webview_zoom(self, webview: Any, delta: float) -> None:
         current_zoom = float(webview.get_zoom_level())
         webview.set_zoom_level(max(0.25, min(3.0, current_zoom + delta)))
+
+    def _webview_acceleration_policy(self) -> Any:
+        # Il default e' "never": su driver dove l'allocazione del buffer GBM
+        # fallisce (NVIDIA proprietario) WebKit non ripiega da solo e la scheda
+        # resta semplicemente vuota, con "Failed to create GBM buffer" nel log
+        # di sessione e nulla nell'interfaccia. Il costo del rendering software
+        # su una vista larga quanto un pannello e' modesto, mentre quel guasto
+        # e' invisibile e totale. Chi ha una scheda a posto rimette il
+        # comportamento originale di WebKit con "on-demand".
+        wanted = self.config.get("webview", {}).get("hardware_acceleration", "never")
+        policies = {
+            "never": WebKit2.HardwareAccelerationPolicy.NEVER,
+            "on-demand": WebKit2.HardwareAccelerationPolicy.ON_DEMAND,
+            "always": WebKit2.HardwareAccelerationPolicy.ALWAYS,
+        }
+        return policies.get(wanted, WebKit2.HardwareAccelerationPolicy.NEVER)
+
+    def _on_content_click(self, widget: Gtk.Widget, _event: Gdk.EventButton) -> bool:
+        # Il pannello e' una finestra di tipo DOCK, e i window manager non danno
+        # il focus da tastiera a un dock quando ci si clicca dentro: il mouse
+        # arriva (i pulsanti reagiscono) ma i campi di testo restano muti.
+        # Chiederlo esplicitamente al primo clic ricrea il comportamento di una
+        # finestra normale. Si ritorna False perche' il clic deve comunque
+        # arrivare al contenuto.
+        if not self.is_active():
+            self.present()
+            widget.grab_focus()
+        return False
 
     def _build_terminal_menu(self, terminal: Vte.Terminal) -> Gtk.Menu:
         menu = Gtk.Menu()
@@ -1382,6 +1461,85 @@ class AiBarWindow(Gtk.Window):
 
             GLib.timeout_add(LAUNCH_MAXIMIZE_INTERVAL_MS, maximize_when_ready)
 
+    def _launch_session_command(self, command: str | list[str]) -> None:
+        threading.Thread(
+            target=self._run_session_command,
+            args=(command,),
+            daemon=True,
+        ).start()
+
+    def _run_session_command(self, command: str | list[str]) -> None:
+        try:
+            completed = subprocess.run(
+                command,
+                shell=isinstance(command, str),
+                capture_output=True,
+                text=True,
+                start_new_session=True,
+            )
+        except Exception as exc:
+            GLib.idle_add(self._show_error, f"Comando non avviato: {command}\n{exc}")
+            return
+
+        if completed.returncode != 0:
+            message = (
+                f"Comando non riuscito ({completed.returncode}): "
+                f"{command_to_shell_line(command)}"
+            )
+            detail = (completed.stderr or completed.stdout or "").strip()
+            if detail:
+                message += f"\n{detail}"
+            GLib.idle_add(self._show_error, message)
+
+    def _launch_session_action(self, action: str) -> None:
+        threading.Thread(
+            target=self._run_session_action,
+            args=(action,),
+            daemon=True,
+        ).start()
+
+    def _run_session_action(self, action: str) -> None:
+        try:
+            supervisor_pid = int(os.environ["AI_BAR_SESSION_SUPERVISOR_PID"])
+            result_path = Path(os.environ["AI_BAR_SESSION_RESULT"])
+            result_dir = Path(os.environ["AI_BAR_SESSION_RESULT_DIR"])
+        except (KeyError, ValueError):
+            self._run_session_command(["/usr/bin/systemctl", action])
+            return
+
+        if (
+            os.getppid() != supervisor_pid
+            or result_path.parent != result_dir
+            or not result_path.name.startswith("ai-bar-session-result-")
+        ):
+            self._run_session_command(["/usr/bin/systemctl", action])
+            return
+
+        try:
+            result_path.unlink(missing_ok=True)
+            requested_signal = signal.SIGUSR1 if action == "reboot" else signal.SIGUSR2
+            os.kill(supervisor_pid, requested_signal)
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not result_path.is_file():
+                time.sleep(0.05)
+            response = result_path.read_text(encoding="utf-8")
+            result_path.unlink(missing_ok=True)
+            status_text, _, detail = response.partition("\n")
+            status = int(status_text)
+        except Exception as exc:
+            GLib.idle_add(
+                self._show_error,
+                f"Comando non avviato: systemctl {action}\n{exc}",
+            )
+            return
+
+        if status != 0:
+            message = f"Comando non riuscito ({status}): systemctl {action}"
+            if detail.strip():
+                message += f"\n{detail.strip()}"
+            GLib.idle_add(self._show_error, message)
+
     def _switch_terminal(self, command: str | list[str], label: str | None = None) -> None:
         if self.terminal_notebook is None:
             self._show_error("Terminale non disponibile.")
@@ -1498,7 +1656,12 @@ class AiBarWindow(Gtk.Window):
             )
             webview.set_hexpand(True)
             webview.set_vexpand(True)
+            settings = webview.get_settings()
+            settings.set_hardware_acceleration_policy(
+                self._webview_acceleration_policy())
+            webview.set_settings(settings)
             webview.connect("key-press-event", self._on_webview_key_press)
+            webview.connect("button-press-event", self._on_content_click)
             webview.load_uri(url)
             widget = webview
             self.embedded[key] = webview
@@ -1997,6 +2160,25 @@ def command_to_shell_line(command: str | list[str]) -> str:
     if isinstance(command, str):
         return command
     return " ".join(shlex.quote(part) for part in command)
+
+
+def system_session_action(command: str | list[str]) -> str | None:
+    if not isinstance(command, list):
+        return None
+    if (
+        len(command) == 2
+        and Path(command[0]).name == "systemctl"
+        and command[1] in {"reboot", "poweroff"}
+    ):
+        return command[1]
+    if (
+        len(command) == 3
+        and Path(command[0]).name == "pkexec"
+        and Path(command[1]).name == "systemctl"
+        and command[2] in {"reboot", "poweroff"}
+    ):
+        return command[2]
+    return None
 
 
 def run_text_command(argv: list[str], timeout: float = 2.0) -> str:
