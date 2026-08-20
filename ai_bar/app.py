@@ -687,7 +687,11 @@ class AiBarWindow(Gtk.Window):
         if resizable and self.config["panel"].get("side", "left") == "right":
             root.pack_start(self._build_resize_handle(), False, False, 0)
 
-        root.pack_start(content, True, True, 0)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        scroller.add(content)
+        root.pack_start(scroller, True, True, 0)
 
         if resizable and self.config["panel"].get("side", "left") == "left":
             root.pack_start(self._build_resize_handle(), False, False, 0)
