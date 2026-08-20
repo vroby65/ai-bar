@@ -1008,6 +1008,22 @@ class AiBarWindow(Gtk.Window):
         current_zoom = float(webview.get_zoom_level())
         webview.set_zoom_level(max(0.25, min(3.0, current_zoom + delta)))
 
+    def _webview_acceleration_policy(self) -> Any:
+        # Il default e' "never": su driver dove l'allocazione del buffer GBM
+        # fallisce (NVIDIA proprietario) WebKit non ripiega da solo e la scheda
+        # resta semplicemente vuota, con "Failed to create GBM buffer" nel log
+        # di sessione e nulla nell'interfaccia. Il costo del rendering software
+        # su una vista larga quanto un pannello e' modesto, mentre quel guasto
+        # e' invisibile e totale. Chi ha una scheda a posto rimette il
+        # comportamento originale di WebKit con "on-demand".
+        wanted = self.config.get("webview", {}).get("hardware_acceleration", "never")
+        policies = {
+            "never": WebKit2.HardwareAccelerationPolicy.NEVER,
+            "on-demand": WebKit2.HardwareAccelerationPolicy.ON_DEMAND,
+            "always": WebKit2.HardwareAccelerationPolicy.ALWAYS,
+        }
+        return policies.get(wanted, WebKit2.HardwareAccelerationPolicy.NEVER)
+
     def _on_content_click(self, widget: Gtk.Widget, _event: Gdk.EventButton) -> bool:
         # Il pannello e' una finestra di tipo DOCK, e i window manager non danno
         # il focus da tastiera a un dock quando ci si clicca dentro: il mouse
@@ -1388,13 +1404,8 @@ class AiBarWindow(Gtk.Window):
             webview.set_hexpand(True)
             webview.set_vexpand(True)
             settings = webview.get_settings()
-            # Compositing accelerato disattivato: su driver dove l'allocazione
-            # del buffer GBM fallisce (NVIDIA proprietario) WebKit non ripiega
-            # da solo e la vista resta semplicemente vuota, con "Failed to
-            # create GBM buffer" nel log di sessione. In software rende, e per
-            # una webapp dentro un pannello la differenza non si nota.
             settings.set_hardware_acceleration_policy(
-                WebKit2.HardwareAccelerationPolicy.NEVER)
+                self._webview_acceleration_policy())
             webview.set_settings(settings)
             webview.connect("key-press-event", self._on_webview_key_press)
             webview.connect("button-press-event", self._on_content_click)
