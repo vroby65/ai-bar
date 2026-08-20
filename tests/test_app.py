@@ -31,6 +31,7 @@ from ai_bar.app import (
     place_window,
     panel_x_for_state,
     webkit_cookie_storage_path,
+    launcher_page_key,
     favicon_cache_path,
     same_origin,
     set_system_muted,
@@ -155,6 +156,7 @@ class ClockLayoutTests(unittest.TestCase):
     def test_window_launcher_uses_embedded_window_switch(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window._switch_embedded_window = Mock()
+        window.launcher_buttons = {}
         button = window._build_launcher_button(
             {"label": "Caja", "command": ["caja"], "target": "window"}
         )
@@ -167,6 +169,7 @@ class ClockLayoutTests(unittest.TestCase):
     def test_url_launcher_uses_webview_switch(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window._switch_webview = Mock()
+        window.launcher_buttons = {}
         button = window._build_launcher_button(
             {"label": "Chat", "url": "https://example.com", "target": "url"}
         )
@@ -1020,6 +1023,69 @@ class ClockLayoutTests(unittest.TestCase):
                     position += step if distance > 0 else -step
                 else:
                     self.fail(f"animation did not converge for panel width {width}")
+
+
+class ActiveLauncherTests(unittest.TestCase):
+    def test_page_key_matches_the_key_each_switch_registers(self):
+        # Se queste due chiavi divergessero il bottone non si accenderebbe mai.
+        self.assertEqual(
+            launcher_page_key({"target": "terminal", "command": ["claude"]}),
+            terminal_session_key(["claude"]))
+        self.assertEqual(
+            launcher_page_key({"target": "window", "command": ["caja"]}),
+            "window:caja")
+        self.assertEqual(
+            launcher_page_key({"target": "url", "url": "https://example.com"}),
+            "url:https://example.com")
+
+    def test_a_plain_launcher_has_no_page_of_its_own(self):
+        # Un bottone che lancia e basta non apre nessuna scheda.
+        self.assertIsNone(launcher_page_key({"command": ["firefox"]}))
+
+    def _window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.terminals = {}
+        window.embedded = {}
+        window.launcher_buttons = {}
+        return window
+
+    def test_only_the_button_of_the_shown_page_stays_lit(self):
+        window = self._window()
+        claude, shell = Gtk.Button(), Gtk.Button()
+        claude_page, shell_page = Gtk.Box(), Gtk.Box()
+        window.terminals = {"claude": claude_page, "bash": shell_page}
+        window.launcher_buttons = {"claude": claude, "bash": shell}
+
+        window._highlight_launcher(claude_page)
+        self.assertTrue(claude.get_style_context().has_class("active-launcher"))
+        self.assertFalse(shell.get_style_context().has_class("active-launcher"))
+
+        window._highlight_launcher(shell_page)
+        self.assertFalse(claude.get_style_context().has_class("active-launcher"))
+        self.assertTrue(shell.get_style_context().has_class("active-launcher"))
+
+    def test_an_embedded_page_lights_its_button_too(self):
+        window = self._window()
+        chat = Gtk.Button()
+        chat_page = Gtk.Box()
+        window.embedded = {"url:https://example.com": chat_page}
+        window.launcher_buttons = {"url:https://example.com": chat}
+
+        window._highlight_launcher(chat_page)
+
+        self.assertTrue(chat.get_style_context().has_class("active-launcher"))
+
+    def test_a_page_without_a_button_leaves_them_all_dark(self):
+        # La scheda iniziale del pannello non e' stata aperta da un bottone.
+        window = self._window()
+        claude = Gtk.Button()
+        claude.get_style_context().add_class("active-launcher")
+        window.terminals = {"claude": Gtk.Box()}
+        window.launcher_buttons = {"claude": claude}
+
+        window._highlight_launcher(Gtk.Box())
+
+        self.assertFalse(claude.get_style_context().has_class("active-launcher"))
 
 
 class FaviconTests(unittest.TestCase):
