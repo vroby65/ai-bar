@@ -41,6 +41,12 @@ except Exception:  # pragma: no cover - exercised only on systems without WebKit
     WebKit2 = None
 
 try:
+    gi.require_version("Secret", "1")
+    from gi.repository import Secret
+except Exception:  # pragma: no cover - exercised only on systems without Secret.
+    Secret = None
+
+try:
     from Xlib import X, XK, display as xlib_display
     from Xlib.ext import record
     from Xlib.protocol import rq
@@ -115,6 +121,60 @@ def panel_animation_step(distance: int) -> int:
     # oscillating: without it the minimum step overshoots the target whenever
     # less than PANEL_ANIMATION_MIN_STEP is left to travel.
     return min(abs(distance), max(PANEL_ANIMATION_MIN_STEP, abs(distance) // 3))
+
+
+LOGIN_FILL_JS = """
+(function () {
+  var user = document.querySelector('input[autocomplete="username"]')
+          || document.querySelector('input[name="username"]')
+          || document.querySelector('input[type="text"]');
+  var pass = document.querySelector('input[type="password"]');
+  if (!user || !pass) { return; }
+  if (user.value || pass.value) { return; }
+  user.value = %s;
+  pass.value = %s;
+  [user, pass].forEach(function (field) {
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+})();
+"""
+
+
+LOGIN_CAPTURE_JS = """
+(function () {
+  if (window.__aiBarLoginHook) { return; }
+  window.__aiBarLoginHook = true;
+  function grab(form) {
+    var pass = form.querySelector('input[type="password"]');
+    if (!pass || !pass.value) { return; }
+    var user = form.querySelector('input[autocomplete="username"]')
+            || form.querySelector('input[name="username"]')
+            || form.querySelector('input[type="text"]');
+    if (!user || !user.value) { return; }
+    window.webkit.messageHandlers.aiBarLogin.postMessage(
+      JSON.stringify({ username: user.value, password: pass.value }));
+  }
+  // L'evento submit copre il tasto Invio e il click sul bottone; l'ascolto e'
+  // in cattura perche' una pagina che chiama preventDefault fermerebbe la fase
+  // di bubbling prima che arrivi qui.
+  document.addEventListener('submit', function (event) {
+    if (event.target && event.target.tagName === 'FORM') { grab(event.target); }
+  }, true);
+})();
+"""
+
+
+def script_message_text(result: Any) -> str:
+    # WebKit 4.1 consegna un JSCValue, le versioni precedenti un
+    # JavascriptResult da cui va estratto: si accettano entrambi.
+    value = result
+    if hasattr(result, "get_js_value"):
+        value = result.get_js_value()
+    try:
+        return value.to_string()
+    except Exception:
+        return ""
 
 
 def clean_window_title(title: str) -> str:
@@ -1577,7 +1637,23 @@ class AiBarWindow(Gtk.Window):
         key = "url:" + url
         widget = self.embedded.get(key)
         if widget is None:
-            webview = WebKit2.WebView.new_with_context(self.web_context or WebKit2.WebContext.get_default())
+            manager = WebKit2.UserContentManager()
+            manager.register_script_message_handler("aiBarLogin")
+            manager.connect(
+                "script-message-received::aiBarLogin",
+                lambda _manager, result: self._on_login_submitted(
+                    url, script_message_text(result)),
+            )
+            manager.add_script(WebKit2.UserScript.new(
+                LOGIN_CAPTURE_JS,
+                WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.END,
+                None, None,
+            ))
+            webview = WebKit2.WebView(
+                web_context=self.web_context or WebKit2.WebContext.get_default(),
+                user_content_manager=manager,
+            )
             webview.set_hexpand(True)
             webview.set_vexpand(True)
             settings = webview.get_settings()
@@ -1607,6 +1683,7 @@ class AiBarWindow(Gtk.Window):
     def _on_web_load_changed(self, view: Any, event: Any, url: str) -> None:
         if event != WebKit2.LoadEvent.FINISHED:
             return
+        self._fill_login(view, url)
         image = self.favicon_targets.get(url)
         if image is not None:
             self._apply_favicon(image, url, view.get_uri())
@@ -1703,6 +1780,105 @@ class AiBarWindow(Gtk.Window):
         for url, image in list(self.favicon_targets.items()):
             if same_origin(page_uri, url):
                 self._apply_favicon(image, url, page_uri, icon_uri)
+
+    def _secret_schema(self) -> Any | None:
+        if Secret is None:
+            return None
+        return Secret.Schema.new(
+            "net.aibar.webview",
+            Secret.SchemaFlags.NONE,
+            {"application": Secret.SchemaAttributeType.STRING,
+             "url": Secret.SchemaAttributeType.STRING,
+             "username": Secret.SchemaAttributeType.STRING},
+        )
+
+    def _web_credentials(self, url: str) -> tuple[str, str] | None:
+        # Le credenziali stanno nel portachiavi di sistema, mai nel file di
+        # configurazione. La voce stessa fa da interruttore: se non c'e', la
+        # compilazione automatica semplicemente non avviene.
+        schema = self._secret_schema()
+        if schema is None:
+            return None
+        try:
+            items = Secret.password_search_sync(
+                schema,
+                {"application": "ai-bar", "url": url},
+                Secret.SearchFlags.UNLOCK | Secret.SearchFlags.LOAD_SECRETS,
+                None,
+            )
+            for item in items:
+                username = item.get_attributes().get("username")
+                password = item.retrieve_secret_sync(None)
+                if username and password is not None:
+                    return username, password.get_text()
+        except Exception as exc:
+            print(f"ai-bar: credenziali non leggibili dal portachiavi: {exc}",
+                  file=sys.stderr)
+        return None
+
+    def _fill_login(self, view: Any, url: str) -> None:
+        current = view.get_uri() or ""
+        # Le credenziali vanno consegnate solo all'origine per cui sono state
+        # salvate: dopo un redirect fuori sito riempire il form significherebbe
+        # passare la password a qualcun altro.
+        if not same_origin(current, url):
+            return
+        found = self._web_credentials(url)
+        if found is None:
+            return
+        username, password = found
+        script = LOGIN_FILL_JS % (json.dumps(username), json.dumps(password))
+        try:
+            view.evaluate_javascript(script, -1, None, None, None, None, None)
+        except Exception as exc:
+            print(f"ai-bar: login non compilato: {exc}", file=sys.stderr)
+
+    def _store_credentials(self, url: str, username: str, password: str) -> None:
+        schema = self._secret_schema()
+        if schema is None:
+            return
+        try:
+            Secret.password_store_sync(
+                schema,
+                {"application": "ai-bar", "url": url, "username": username},
+                Secret.COLLECTION_DEFAULT,
+                f"ai-bar {urllib.parse.urlsplit(url).hostname or url}",
+                password,
+                None,
+            )
+        except Exception as exc:
+            print(f"ai-bar: credenziali non salvate: {exc}", file=sys.stderr)
+
+    def _on_login_submitted(self, url: str, payload: str) -> None:
+        try:
+            data = json.loads(payload)
+            username = str(data["username"])
+            password = str(data["password"])
+        except Exception:
+            return
+        if not username or not password:
+            return
+        # Niente domanda se quelle credenziali sono gia' quelle salvate: la
+        # richiesta comparirebbe a ogni accesso.
+        if self._web_credentials(url) == (username, password):
+            return
+
+        host = urllib.parse.urlsplit(url).hostname or url
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Salvare le credenziali di {host} nel portachiavi?",
+        )
+        dialog.format_secondary_text(
+            f"Utente: {username}\nLa password finisce nel portachiavi di "
+            "sistema, non nel file di configurazione."
+        )
+        answer = dialog.run()
+        dialog.destroy()
+        if answer == Gtk.ResponseType.YES:
+            self._store_credentials(url, username, password)
 
     def _reload(self) -> None:
         if self.xapp_tray_host is not None:

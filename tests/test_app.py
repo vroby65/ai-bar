@@ -327,18 +327,24 @@ class ClockLayoutTests(unittest.TestCase):
     @patch("ai_bar.app.WebKit2")
     def test_url_launcher_reuses_the_shared_webkit_context(self, webkit2):
         webview = Mock()
-        webkit2.WebView.new_with_context.return_value = webview
+        webkit2.WebView.return_value = webview
         context = Mock()
 
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = {}
         window.web_context = context
         window.embedded = {}
+        window.favicon_targets = {}
         window.terminal_notebook = Mock()
         window.present = Mock()
         window._switch_webview("https://example.com", "Chat")
 
-        webkit2.WebView.new_with_context.assert_called_once_with(context)
+        # La vista si costruisce per proprieta' e non con new_with_context,
+        # perche' il gestore dei contenuti si puo' passare solo alla nascita.
+        # Cio' che conta resta il contesto condiviso: e' quello che tiene i
+        # cookie, e senza di lui ogni scheda ripartirebbe dal login.
+        webkit2.WebView.assert_called_once()
+        self.assertIs(webkit2.WebView.call_args.kwargs["web_context"], context)
         webview.load_uri.assert_called_once_with("https://example.com")
         window.terminal_notebook.append_page.assert_called_once()
 
@@ -349,7 +355,7 @@ class ClockLayoutTests(unittest.TestCase):
         webview = Mock()
         settings = Mock()
         webview.get_settings.return_value = settings
-        webkit2.WebView.new_with_context.return_value = webview
+        webkit2.WebView.return_value = webview
 
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = {}
@@ -377,7 +383,7 @@ class ClockLayoutTests(unittest.TestCase):
                 webview = Mock()
                 settings = Mock()
                 webview.get_settings.return_value = settings
-                webkit2.WebView.new_with_context.return_value = webview
+                webkit2.WebView.return_value = webview
 
                 window = AiBarWindow.__new__(AiBarWindow)
                 window.config = {"webview": {"hardware_acceleration": wanted}}
@@ -1103,6 +1109,94 @@ class FaviconTests(unittest.TestCase):
         window._on_favicon_changed(None, "https://other.example.com/",
                                    "https://other.example.com/favicon.ico")
         window._apply_favicon.assert_not_called()
+
+
+class KeyringLoginTests(unittest.TestCase):
+    def _window(self, credentials=None):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._web_credentials = Mock(return_value=credentials)
+        return window
+
+    def test_login_is_filled_on_the_site_it_was_saved_for(self):
+        window = self._window(("ada", "hunter2"))
+        view = Mock()
+        view.get_uri.return_value = "https://www.example.net/app/login.php"
+
+        window._fill_login(view, "https://www.example.net/app/")
+
+        view.evaluate_javascript.assert_called_once()
+        script = view.evaluate_javascript.call_args.args[0]
+        self.assertIn('"ada"', script)
+
+    def test_login_is_not_filled_after_a_redirect_elsewhere(self):
+        # Il caso che conta: riempire il form su un'altra origine vorrebbe dire
+        # consegnare la password a qualcun altro.
+        window = self._window(("ada", "hunter2"))
+        view = Mock()
+        view.get_uri.return_value = "https://evil.example.com/login"
+
+        window._fill_login(view, "https://www.example.net/app/")
+
+        view.evaluate_javascript.assert_not_called()
+
+    def test_nothing_is_filled_without_a_stored_login(self):
+        # La voce nel portachiavi fa da interruttore: senza, la compilazione
+        # automatica semplicemente non avviene.
+        window = self._window(None)
+        view = Mock()
+        view.get_uri.return_value = "https://www.example.net/app/"
+
+        window._fill_login(view, "https://www.example.net/app/")
+
+        view.evaluate_javascript.assert_not_called()
+
+    def test_a_submitted_login_is_offered_for_saving(self):
+        window = self._window(None)
+        window._store_credentials = Mock()
+        with patch("ai_bar.app.Gtk.MessageDialog") as dialog_class:
+            dialog = dialog_class.return_value
+            dialog.run.return_value = Gtk.ResponseType.YES
+            window._on_login_submitted(
+                "https://www.example.net/app/",
+                '{"username": "ada", "password": "hunter2"}')
+
+        window._store_credentials.assert_called_once_with(
+            "https://www.example.net/app/", "ada", "hunter2")
+
+    def test_a_refused_login_is_not_stored(self):
+        window = self._window(None)
+        window._store_credentials = Mock()
+        with patch("ai_bar.app.Gtk.MessageDialog") as dialog_class:
+            dialog_class.return_value.run.return_value = Gtk.ResponseType.NO
+            window._on_login_submitted(
+                "https://www.example.net/app/",
+                '{"username": "ada", "password": "hunter2"}')
+
+        window._store_credentials.assert_not_called()
+
+    def test_an_unchanged_login_is_not_asked_about_again(self):
+        # Senza questo la domanda tornerebbe a ogni accesso.
+        window = self._window(("ada", "hunter2"))
+        window._store_credentials = Mock()
+        with patch("ai_bar.app.Gtk.MessageDialog") as dialog_class:
+            window._on_login_submitted(
+                "https://www.example.net/app/",
+                '{"username": "ada", "password": "hunter2"}')
+
+        dialog_class.assert_not_called()
+        window._store_credentials.assert_not_called()
+
+    def test_an_incomplete_submission_is_ignored(self):
+        window = self._window(None)
+        window._store_credentials = Mock()
+        with patch("ai_bar.app.Gtk.MessageDialog") as dialog_class:
+            for payload in ("", "not json", "{}",
+                            '{"username": "ada", "password": ""}'):
+                with self.subTest(payload=payload):
+                    window._on_login_submitted("https://www.example.net/app/", payload)
+
+        dialog_class.assert_not_called()
+        window._store_credentials.assert_not_called()
 
 
 if __name__ == "__main__":
