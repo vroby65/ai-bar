@@ -370,6 +370,11 @@ button.window-button.active-window {
   border-color: #63b68e;
 }
 
+button.launcher-button.active-launcher {
+  background: #314238;
+  border-color: #63b68e;
+}
+
 button.window-button {
   min-height: 30px;
   padding: 4px 7px;
@@ -471,6 +476,7 @@ class AiBarWindow(Gtk.Window):
         self.terminal: Vte.Terminal | None = None
         self.terminals: dict[str, Vte.Terminal] = {}
         self.embedded: dict[str, Gtk.Widget] = {}
+        self.launcher_buttons: dict[str, Gtk.Widget] = {}
         self.terminal_notebook: Gtk.Notebook | None = None
         self.wnck_screen: Any = None
         self.window_flow: Gtk.FlowBox | None = None
@@ -796,6 +802,10 @@ class AiBarWindow(Gtk.Window):
                 ),
             )
 
+        page_key = launcher_page_key(button_config)
+        if page_key is not None:
+            self.launcher_buttons[page_key] = button
+
         inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         inner.set_halign(Gtk.Align.CENTER)
         inner.set_valign(Gtk.Align.CENTER)
@@ -1026,11 +1036,31 @@ class AiBarWindow(Gtk.Window):
     def _on_terminal_page_switched(
         self,
         _notebook: Gtk.Notebook,
-        terminal: Gtk.Widget,
+        page: Gtk.Widget,
         _page: int,
     ) -> None:
-        if isinstance(terminal, Vte.Terminal):
-            self.terminal = terminal
+        if isinstance(page, Vte.Terminal):
+            self.terminal = page
+        self._highlight_launcher(page)
+
+    def _highlight_launcher(self, page: Gtk.Widget) -> None:
+        # Il bottone dello strumento mostrato resta in evidenza: le schede sono
+        # nascoste, quindi senza questo nulla dice quale strumento si sta
+        # guardando. La scheda iniziale non ha un bottone, e in quel caso
+        # nessuno resta acceso.
+        shown = None
+        for pages in (self.terminals, self.embedded):
+            for key, widget in pages.items():
+                if widget is page:
+                    shown = key
+                    break
+        for key, button in self.launcher_buttons.items():
+            style = button.get_style_context()
+            if key == shown:
+                style.add_class("active-launcher")
+            else:
+                style.remove_class("active-launcher")
+
 
     def _on_resize_handle_realize(self, handle: Gtk.Widget) -> None:
         gdk_window = handle.get_window()
@@ -1657,6 +1687,19 @@ def terminal_argv(command: str | list[str] | None, width_px: int | None = None) 
     if width_px is not None:
         return ["env", f"AI_BAR_TERMINAL_WIDTH_PX={width_px}", *argv]
     return argv
+
+
+def launcher_page_key(button_config: dict[str, Any]) -> str | None:
+    # La stessa chiave con cui la scheda viene registrata: e' cosi' che si
+    # risale dal contenuto mostrato al bottone che lo ha aperto.
+    target = button_config.get("target")
+    if target == "terminal":
+        return terminal_session_key(button_config.get("command"))
+    if target == "window":
+        return "window:" + command_to_shell_line(button_config["command"])
+    if target == "url":
+        return "url:" + str(button_config.get("url", ""))
+    return None
 
 
 def terminal_session_key(command: str | list[str] | None) -> str:
