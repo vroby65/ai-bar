@@ -113,6 +113,9 @@
       ]
     }
   ],
+  "webview": {
+    "hardware_acceleration": "never"
+  },
   "terminal": {
     "command": ["hermes"],
     "working_directory": null,
