@@ -52,6 +52,7 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `launcher_groups[].buttons[].url`: the URL for `target: "url"` buttons
 - `launcher_groups[].buttons[].maximized`: opens the external window maximized
 - `terminal.command`: shell or command to open in the embedded terminal
+- `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
@@ -59,6 +60,8 @@ The separate button at the left of the volume control opens the configuration as
 The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. `window` and `url` buttons work the same way: the app or web app is embedded in its own tab and keeps running while you switch to another tab. Web apps keep cookies and site data across restarts, and while a web tab is active you can use `Ctrl++` or `Ctrl+=` to zoom in and `Ctrl+-` to zoom out. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
 
 Embedding GUI programs (`target: "window"`) re-parents the program's first window into the panel using `Gtk.Socket` and libwnck. It is best effort: single-window GTK applications work well, but some programs do not tolerate being embedded (the decoration frame may remain, or the window may stay on the desktop); in that case the launcher still opens the program on the desktop. Web apps (`target: "url"`) require the `gir1.2-webkit2-4.1` package, installed by `install.sh`.
+
+Web views run without accelerated compositing by default. On drivers where the GBM buffer allocation fails — the proprietary NVIDIA driver, for one — WebKit does not fall back on its own and the view stays blank, with `Failed to create GBM buffer` in the session log and nothing at all in the interface. On a view the width of a panel, software rendering costs little; a failure nobody can diagnose costs a lot. Set `webview.hardware_acceleration` to `on-demand` to get WebKit's own behaviour back, or to `always`.
 
 The embedded tray supports XApp icons and, in X11 sessions, XEmbed icons. Applets share a left-aligned grid and wrap individually when they do not fit within the available width. On Wayland and with some modern AppIndicator/StatusNotifier applications, items may not appear in the panel; in that case, the configurable `tray.items` row remains available. On X11, the Super key hides or shows the panel with a sliding animation.
 

@@ -329,6 +329,7 @@ class ClockLayoutTests(unittest.TestCase):
         context = Mock()
 
         window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {}
         window.web_context = context
         window.embedded = {}
         window.terminal_notebook = Mock()
@@ -338,6 +339,88 @@ class ClockLayoutTests(unittest.TestCase):
         webkit2.WebView.new_with_context.assert_called_once_with(context)
         webview.load_uri.assert_called_once_with("https://example.com")
         window.terminal_notebook.append_page.assert_called_once()
+
+    @patch("ai_bar.app.WebKit2")
+    def test_url_launcher_renders_without_accelerated_compositing(self, webkit2):
+        # Su driver dove l'allocazione del buffer GBM fallisce WebKit non
+        # ripiega da solo: la scheda resta vuota invece di rendere in software.
+        webview = Mock()
+        settings = Mock()
+        webview.get_settings.return_value = settings
+        webkit2.WebView.new_with_context.return_value = webview
+
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {}
+        window.web_context = Mock()
+        window.embedded = {}
+        window.terminal_notebook = Mock()
+        window.present = Mock()
+        window._switch_webview("https://example.com", "Chat")
+
+        settings.set_hardware_acceleration_policy.assert_called_once_with(
+            webkit2.HardwareAccelerationPolicy.NEVER
+        )
+        webview.set_settings.assert_called_once_with(settings)
+
+    @patch("ai_bar.app.WebKit2")
+    def test_the_acceleration_policy_can_be_configured(self, webkit2):
+        # Chi ha una scheda che funziona rimette il comportamento originale di
+        # WebKit senza toccare il codice.
+        for wanted, expected in (
+            ("never", "NEVER"),
+            ("on-demand", "ON_DEMAND"),
+            ("always", "ALWAYS"),
+        ):
+            with self.subTest(wanted=wanted):
+                webview = Mock()
+                settings = Mock()
+                webview.get_settings.return_value = settings
+                webkit2.WebView.new_with_context.return_value = webview
+
+                window = AiBarWindow.__new__(AiBarWindow)
+                window.config = {"webview": {"hardware_acceleration": wanted}}
+                window.web_context = Mock()
+                window.embedded = {}
+                window.terminal_notebook = Mock()
+                window.present = Mock()
+                window._switch_webview("https://example.com", "Chat")
+
+                settings.set_hardware_acceleration_policy.assert_called_once_with(
+                    getattr(webkit2.HardwareAccelerationPolicy, expected)
+                )
+
+    @patch("ai_bar.app.WebKit2")
+    def test_an_unset_acceleration_policy_stays_off(self, webkit2):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {}
+
+        self.assertIs(window._webview_acceleration_policy(),
+                      webkit2.HardwareAccelerationPolicy.NEVER)
+
+    def test_a_click_on_the_content_asks_for_keyboard_focus(self):
+        # Il pannello e' un DOCK: senza richiesta esplicita i campi di testo
+        # restano non editabili finche' non si cambia scheda.
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.is_active = Mock(return_value=False)
+        window.present = Mock()
+        widget = Mock()
+
+        handled = window._on_content_click(widget, Mock())
+
+        window.present.assert_called_once()
+        widget.grab_focus.assert_called_once()
+        # False: il clic deve comunque arrivare al contenuto.
+        self.assertFalse(handled)
+
+    def test_a_click_on_the_content_leaves_an_active_panel_alone(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.is_active = Mock(return_value=True)
+        window.present = Mock()
+        widget = Mock()
+
+        self.assertFalse(window._on_content_click(widget, Mock()))
+        window.present.assert_not_called()
+        widget.grab_focus.assert_not_called()
 
     def test_maximize_launched_window_ignores_windows_present_before_launch(self):
         class Window:

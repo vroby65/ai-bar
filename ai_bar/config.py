@@ -11,6 +11,14 @@ class ConfigError(ValueError):
     pass
 
 
+# I tre valori di WebKitHardwareAccelerationPolicy. Il default e' "never":
+# quando l'allocazione del buffer GBM fallisce WebKit non ripiega da solo e la
+# scheda resta vuota senza dirlo, mentre il costo del rendering software su una
+# vista larga quanto un pannello e' modesto. Chi ha una scheda a posto rimette
+# il comportamento originale di WebKit con "on-demand".
+WEBVIEW_ACCELERATION_POLICIES = ("never", "on-demand", "always")
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "panel": {
         "side": "left",
@@ -107,6 +115,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "working_directory": None,
         "font": "Monospace 10",
         "scrollback_lines": 10000,
+    },
+    "webview": {
+        "hardware_acceleration": "never",
     },
     "session_buttons": [
         {
@@ -240,6 +251,11 @@ def validate_config(config: dict[str, Any]) -> None:
     command = config.get("terminal", {}).get("command")
     if command is not None:
         validate_command(command, "terminal.command")
+
+    acceleration = config.get("webview", {}).get("hardware_acceleration", "never")
+    if acceleration not in WEBVIEW_ACCELERATION_POLICIES:
+        allowed = ", ".join(f"'{value}'" for value in WEBVIEW_ACCELERATION_POLICIES)
+        raise ConfigError(f"webview.hardware_acceleration deve essere {allowed}.")
 
     for button in config.get("session_buttons", []):
         action = button.get("action")
