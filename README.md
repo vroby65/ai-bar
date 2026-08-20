@@ -39,6 +39,7 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 
 - `panel.side`: `left` or `right`
 - `panel.width`: panel width, default `400`
+- `panel.height`: `screen` uses the selected monitor's work area; if the panel content is taller, it scrolls vertically instead of extending past the screen
 - `panel.resizable`: enables dragging the side edge to change the width
 - `panel.monitor`: which monitor holds the panel, by index or connector name such as `DP-1`; unset uses the primary one
 - `panel.launch_monitor`: where windows started from the panel should appear, by index or connector name, or `auto` for the primary monitor; unset leaves placement to the window manager

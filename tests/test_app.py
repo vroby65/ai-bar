@@ -828,6 +828,34 @@ class ClockLayoutTests(unittest.TestCase):
 
         window.move.assert_called_once_with(2260, 240)
 
+    def test_panel_content_scrolls_instead_of_growing_past_the_screen(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {
+            "panel": {"side": "left", "resizable": False},
+            "launcher_groups": [],
+            "terminal": {},
+        }
+        window.terminals = {}
+        window.embedded = {}
+        window.launcher_buttons = {}
+        window.detached = {}
+        window.detach_button = None
+        window._build_clock = lambda: Gtk.Label()
+        window._build_tray_row = lambda: Gtk.Label()
+        window._build_terminal = lambda _command: Gtk.Label()
+        window._build_detach_bar = lambda: Gtk.Label()
+        window._build_session_buttons = lambda: Gtk.Label()
+
+        root = window._build_content()
+        scroller = root.get_children()[0]
+
+        self.assertIsInstance(scroller, Gtk.ScrolledWindow)
+        self.assertEqual(
+            scroller.get_policy(),
+            (Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC),
+        )
+        root.destroy()
+
     def test_panel_span_stops_at_a_reserved_bottom_panel(self):
         # A desktop panel at the bottom shrinks the work area: 1440 pixels of
         # monitor, 37 reserved, so the panel gets 1403 and must not cover them.
