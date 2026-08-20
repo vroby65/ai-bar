@@ -4,39 +4,116 @@ set -u
 CONFIG_DIR="${XDG_CONFIG_HOME:-"$HOME/.config"}/ai-bar"
 CONFIG_FILE="${AI_BAR_CONFIG:-"$CONFIG_DIR/config.json"}"
 OPENBOX_SESSION="${OPENBOX_SESSION:-/usr/bin/openbox-session}"
+POLKIT_AUTH_AGENT="${POLKIT_AUTH_AGENT:-}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-/usr/bin/systemctl}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+USE_SOURCE_AI_BAR=false
 
 if [ -z "${AI_BAR_BIN:-}" ]; then
-    if command -v ai-bar >/dev/null 2>&1; then
-        AI_BAR_BIN="$(command -v ai-bar)"
-    elif [ -x "$HOME/.local/bin/ai-bar" ]; then
-        AI_BAR_BIN="$HOME/.local/bin/ai-bar"
+    if [ -n "${AI_BAR_SOURCE_DIR:-}" ] && [ -f "$AI_BAR_SOURCE_DIR/ai_bar/__main__.py" ]; then
+        PROJECT_DIR="$AI_BAR_SOURCE_DIR"
+        USE_SOURCE_AI_BAR=true
+    elif [ -f "$PROJECT_DIR/ai_bar/__main__.py" ]; then
+        USE_SOURCE_AI_BAR=true
     else
-        echo "ai-bar-openbox-session: comando ai-bar non trovato." >&2
-        exit 1
+        if command -v ai-bar >/dev/null 2>&1; then
+            AI_BAR_BIN="$(command -v ai-bar)"
+        elif [ -x "$HOME/.local/bin/ai-bar" ]; then
+            AI_BAR_BIN="$HOME/.local/bin/ai-bar"
+        else
+            echo "ai-bar-openbox-session: comando ai-bar non trovato." >&2
+            exit 1
+        fi
     fi
 fi
 
 mkdir -p "$CONFIG_DIR"
 if [ ! -f "$CONFIG_FILE" ]; then
-    "$AI_BAR_BIN" --print-default-config > "$CONFIG_FILE"
+    if $USE_SOURCE_AI_BAR; then
+        PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+            "$PYTHON_BIN" -m ai_bar --print-default-config > "$CONFIG_FILE"
+    else
+        "$AI_BAR_BIN" --print-default-config > "$CONFIG_FILE"
+    fi
 fi
 
 export DESKTOP_SESSION="ai-bar-openbox"
 export XDG_CURRENT_DESKTOP="Openbox"
 export XDG_SESSION_DESKTOP="ai-bar-openbox"
 
+start_polkit_agent() {
+    if [ -n "$POLKIT_AUTH_AGENT" ] && [ -x "$POLKIT_AUTH_AGENT" ]; then
+        "$POLKIT_AUTH_AGENT" >/dev/null 2>&1 &
+        return
+    fi
+
+    for agent in \
+        /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 \
+        /usr/libexec/polkit-gnome-authentication-agent-1
+    do
+        if [ -x "$agent" ]; then
+            "$agent" >/dev/null 2>&1 &
+            return
+        fi
+    done
+}
+
+start_polkit_agent
+
 "$OPENBOX_SESSION" &
 openbox_pid=$!
 
 sleep "${AI_BAR_START_DELAY:-1}"
-run_ai_bar() {
-    while kill -0 "$openbox_pid" 2>/dev/null; do
-        "$AI_BAR_BIN" --config "$CONFIG_FILE" &
-        ai_bar_pid=$!
-        trap 'kill "$ai_bar_pid" 2>/dev/null; wait "$ai_bar_pid" 2>/dev/null; exit 0' INT TERM
+run_session_action() {
+    local action="$1"
+    local output
+    local status
+    local temporary_result="${AI_BAR_SESSION_RESULT}.tmp"
 
-        wait "$ai_bar_pid"
-        ai_bar_status=$?
+    if output="$("$SYSTEMCTL_BIN" "$action" 2>&1)"; then
+        status=0
+    else
+        status=$?
+    fi
+
+    umask 077
+    {
+        printf '%s\n' "$status"
+        printf '%s' "$output"
+        if [ -n "$output" ]; then
+            printf '\n'
+        fi
+    } > "$temporary_result"
+    mv -f -- "$temporary_result" "$AI_BAR_SESSION_RESULT"
+}
+
+run_ai_bar() {
+    AI_BAR_SESSION_SUPERVISOR_PID="$BASHPID"
+    AI_BAR_SESSION_RESULT_DIR="${XDG_RUNTIME_DIR:-$CONFIG_DIR}"
+    AI_BAR_SESSION_RESULT="$AI_BAR_SESSION_RESULT_DIR/ai-bar-session-result-$BASHPID"
+    export AI_BAR_SESSION_SUPERVISOR_PID AI_BAR_SESSION_RESULT_DIR AI_BAR_SESSION_RESULT
+    trap 'run_session_action reboot' USR1
+    trap 'run_session_action poweroff' USR2
+
+    while kill -0 "$openbox_pid" 2>/dev/null; do
+        if $USE_SOURCE_AI_BAR; then
+            PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+                "$PYTHON_BIN" -m ai_bar --config "$CONFIG_FILE" &
+        else
+            "$AI_BAR_BIN" --config "$CONFIG_FILE" &
+        fi
+        ai_bar_pid=$!
+        trap 'kill "$ai_bar_pid" 2>/dev/null; wait "$ai_bar_pid" 2>/dev/null; rm -f -- "$AI_BAR_SESSION_RESULT" "$AI_BAR_SESSION_RESULT.tmp"; exit 0' INT TERM
+
+        while true; do
+            wait "$ai_bar_pid"
+            ai_bar_status=$?
+            if ! kill -0 "$ai_bar_pid" 2>/dev/null; then
+                break
+            fi
+        done
         trap - INT TERM
 
         if ! kill -0 "$openbox_pid" 2>/dev/null; then
@@ -46,6 +123,8 @@ run_ai_bar() {
         echo "ai-bar-openbox-session: ai-bar terminato (stato $ai_bar_status), riavvio..." >&2
         sleep 1
     done
+
+    rm -f -- "$AI_BAR_SESSION_RESULT" "$AI_BAR_SESSION_RESULT.tmp"
 }
 
 run_ai_bar &
