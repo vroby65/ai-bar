@@ -186,6 +186,7 @@ class ClockLayoutTests(unittest.TestCase):
         window = AiBarWindow.__new__(AiBarWindow)
         window.web_context = context
         window.embedded = {}
+        window.detached = {}
         window.terminal_notebook = Mock()
         window.present = Mock()
         window._switch_webview("https://example.com", "Chat")
@@ -316,6 +317,7 @@ class ClockLayoutTests(unittest.TestCase):
         window = AiBarWindow.__new__(AiBarWindow)
         hermes = Mock()
         window.terminals = {terminal_session_key(["hermes"]): hermes}
+        window.detached = {}
         window.terminal_notebook = Mock()
         window.terminal_notebook.page_num.return_value = 2
         window._build_terminal = Mock()
@@ -333,6 +335,7 @@ class ClockLayoutTests(unittest.TestCase):
         hermes = Mock()
         codex = Mock()
         window.terminals = {terminal_session_key(["hermes"]): hermes}
+        window.detached = {}
         window.terminal_notebook = Mock()
         window.terminal_notebook.append_page.return_value = 1
         window._build_terminal = Mock(return_value=codex)
@@ -351,6 +354,7 @@ class ClockLayoutTests(unittest.TestCase):
         calls = []
         terminal.show_all.side_effect = lambda: calls.append("show")
         window.terminals = {}
+        window.detached = {}
         window.terminal_notebook = Mock()
         window.terminal_notebook.append_page.return_value = 1
         window.terminal_notebook.set_current_page.side_effect = lambda _page: calls.append("select")
@@ -366,6 +370,7 @@ class ClockLayoutTests(unittest.TestCase):
         window = AiBarWindow.__new__(AiBarWindow)
         terminal = Mock()
         window.terminals = {}
+        window.detached = {}
         window.terminal_notebook = Mock()
         window.terminal_notebook.append_page.return_value = 0
         window._build_terminal = Mock(return_value=terminal)
@@ -806,7 +811,9 @@ class ActiveLauncherTests(unittest.TestCase):
     def _window(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window.terminals = {}
+        window.detached = {}
         window.embedded = {}
+        window.detached = {}
         window.launcher_buttons = {}
         return window
 
@@ -847,6 +854,161 @@ class ActiveLauncherTests(unittest.TestCase):
         window._highlight_launcher(Gtk.Box())
 
         self.assertFalse(claude.get_style_context().has_class("active-launcher"))
+
+
+class DetachTests(unittest.TestCase):
+    def _window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.terminals = {}
+        window.embedded = {}
+        window.detached = {}
+        window.launcher_buttons = {}
+        window.detach_button = None
+        return window
+
+    def test_the_first_tab_is_detachable_too(self):
+        # Con terminal.command uguale al comando di un bottone, la prima scheda
+        # e' anche la sua: escluderla renderebbe quel bottone inspiegabilmente
+        # diverso dagli altri.
+        window = self._window()
+
+        self.assertTrue(window._detachable_page(Gtk.Box()))
+        self.assertFalse(window._detachable_page(None))
+
+    def test_detaching_the_last_tab_leaves_the_area_empty(self):
+        # Nessuna scheda di rimpiazzo: le linguette sono nascoste, quindi una
+        # scheda che nessun pulsante possiede sarebbe un processo invisibile
+        # che nessuno potrebbe piu' raggiungere ne' chiudere.
+        window = self._window()
+        notebook = Gtk.Notebook()
+        window.terminal_notebook = notebook
+        page = Gtk.Box()
+        window.terminals = {"zsh": page}
+        notebook.append_page(page, Gtk.Label(label="Zsh"))
+        # Un notebook sceglie solo pagine visibili: senza questo la scheda
+        # corrente resta -1 e il test proverebbe il ramo sbagliato.
+        notebook.show_all()
+        notebook.set_current_page(0)
+        window._place_detached = Mock()
+
+        window._detach_current_page()
+
+        self.assertEqual(notebook.get_n_pages(), 0)
+        self.assertEqual(list(window.detached), ["zsh"])
+
+    def test_a_returning_tab_is_reachable_from_its_button_again(self):
+        window = self._window()
+        window.present = Mock()
+        notebook = Gtk.Notebook()
+        window.terminal_notebook = notebook
+        page = Gtk.Box()
+        window.terminals = {"zsh": page}
+        detached = Gtk.Window(title="Zsh \u2014 ai-bar")
+        detached.add(page)
+        window.detached = {"zsh": detached}
+
+        window._on_detached_closed(detached, None, "zsh")
+
+        self.assertEqual(notebook.get_n_pages(), 1)
+        self.assertIs(window.terminals["zsh"], page)
+        self.assertEqual(window.detached, {})
+
+    def test_an_embedded_window_cannot_be_detached(self):
+        # Staccare un Gtk.Socket vuol dire smontare l'incorporamento.
+        window = self._window()
+
+        self.assertFalse(window._detachable_page(Gtk.Socket()))
+
+    def test_the_page_key_is_found_among_both_kinds_of_tab(self):
+        window = self._window()
+        terminal, chat, stranger = Gtk.Box(), Gtk.Box(), Gtk.Box()
+        window.terminals = {"claude": terminal}
+        window.embedded = {"url:https://example.com": chat}
+
+        self.assertEqual(window._page_key(terminal), "claude")
+        self.assertEqual(window._page_key(chat), "url:https://example.com")
+        self.assertIsNone(window._page_key(stranger))
+
+    def test_clicking_a_detached_tool_raises_its_window(self):
+        # Senza questo page_num tornerebbe -1 e set_current_page(-1)
+        # selezionerebbe l'ultima scheda, in silenzio.
+        window = self._window()
+        window.terminal_notebook = Mock()
+        detached = Mock()
+        window.detached = {terminal_session_key(["claude"]): detached}
+
+        window._switch_terminal(["claude"], "Claude")
+
+        detached.present.assert_called_once()
+        window.terminal_notebook.set_current_page.assert_not_called()
+        window.terminal_notebook.append_page.assert_not_called()
+
+    @patch("ai_bar.app.WebKit2")
+    def test_clicking_a_detached_web_app_raises_its_window(self, _webkit2):
+        window = self._window()
+        window.terminal_notebook = Mock()
+        detached = Mock()
+        window.detached = {"url:https://example.com": detached}
+
+        window._switch_webview("https://example.com", "Chat")
+
+        detached.present.assert_called_once()
+        window.terminal_notebook.set_current_page.assert_not_called()
+
+    def test_a_detached_tool_is_marked_on_its_button(self):
+        window = self._window()
+        claude, shell = Gtk.Button(), Gtk.Button()
+        window.launcher_buttons = {"claude": claude, "bash": shell}
+        window.terminal_notebook = None
+        window.detached = {"claude": Mock()}
+
+        window._refresh_launcher_states()
+
+        self.assertTrue(claude.get_style_context().has_class("detached-launcher"))
+        self.assertFalse(shell.get_style_context().has_class("detached-launcher"))
+
+        window.detached = {}
+        window._refresh_launcher_states()
+        self.assertFalse(claude.get_style_context().has_class("detached-launcher"))
+
+    def test_the_switched_page_wins_over_the_notebook_state(self):
+        # Durante switch-page il notebook non ha ancora aggiornato la propria
+        # pagina corrente: chiederglielo darebbe quella di prima, e il pulsante
+        # "stacca" resterebbe spento sulla scheda appena aperta.
+        window = self._window()
+        window.home_page = Gtk.Box()
+        window.detach_button = Gtk.Button()
+        notebook = Mock()
+        notebook.get_current_page.return_value = 0
+        notebook.get_nth_page.return_value = Gtk.Socket()
+        window.terminal_notebook = notebook
+
+        window._refresh_launcher_states(Gtk.Box())
+        self.assertTrue(window.detach_button.get_sensitive())
+
+        window._refresh_launcher_states()
+        self.assertFalse(window.detach_button.get_sensitive())
+
+    def test_closing_a_detached_window_puts_the_tab_back(self):
+        window = self._window()
+        window.present = Mock()
+        notebook = Gtk.Notebook()
+        window.terminal_notebook = notebook
+        page = Gtk.Box()
+        detached = Gtk.Window(title="Claude \u2014 ai-bar")
+        detached.add(page)
+        window.detached = {"claude": detached}
+
+        handled = window._on_detached_closed(detached, None, "claude")
+
+        # True: la finestra la distruggiamo noi, dopo aver messo al sicuro
+        # il contenuto.
+        self.assertTrue(handled)
+        self.assertEqual(window.detached, {})
+        self.assertEqual(notebook.get_n_pages(), 1)
+        self.assertIs(notebook.get_nth_page(0), page)
+        self.assertEqual(notebook.get_tab_label_text(page), "Claude")
+
 
 
 if __name__ == "__main__":
