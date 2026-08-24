@@ -61,6 +61,10 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual(config["session_buttons"][2]["command"], ["systemctl", "reboot"])
         self.assertEqual(config["session_buttons"][3]["command"], ["systemctl", "poweroff"])
+        self.assertEqual(
+            [button["label"] for button in config["quick_launchers"]],
+            ["AnyDesk", "LocalSend"],
+        )
 
     def test_user_config_overrides_nested_values_without_losing_defaults(self):
         merged = merge_config(
@@ -99,6 +103,17 @@ class ConfigTests(unittest.TestCase):
             config = load_config(path)
 
         self.assertEqual(config["session_buttons"][0]["action"], "reload")
+
+    def test_load_config_validates_quick_launcher_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(
+                json.dumps({"quick_launchers": [{"label": "Broken"}]}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ConfigError):
+                load_config(path)
 
     def test_load_config_validates_launcher_target(self):
         with tempfile.TemporaryDirectory() as directory:

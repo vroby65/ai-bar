@@ -74,6 +74,7 @@ EMBED_POLL_INTERVAL_MS = 150
 EMBED_POLL_ATTEMPTS = 60
 WEBVIEW_ZOOM_STEP = 0.1
 FAVICON_SIZE = 24
+PAGE_ACTION_ICON_SIZE = 16
 FAVICON_TIMEOUT_SECONDS = 5
 FAVICON_MAX_BYTES = 1 << 20
 TERMINAL_FOREGROUND = "#f2f2ee"
@@ -522,6 +523,17 @@ button.volume-settings-button:hover {
   background: #2d3335;
 }
 
+button.quick-launcher-button {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 3px;
+}
+
+button.quick-launcher-button:hover {
+  background: #2d3335;
+}
+
 scale.volume-slider {
   min-width: 100px;
 }
@@ -596,6 +608,7 @@ class AiBarWindow(Gtk.Window):
         self.launcher_buttons: dict[str, Gtk.Widget] = {}
         self.detached: dict[str, Gtk.Window] = {}
         self.detach_button: Gtk.Widget | None = None
+        self.reload_button: Gtk.Widget | None = None
         self.favicon_targets: dict[str, Gtk.Image] = {}
         self.favicon_fetched: set[str] = set()
         self.terminal_notebook: Gtk.Notebook | None = None
@@ -1750,17 +1763,52 @@ class AiBarWindow(Gtk.Window):
     def _build_detach_bar(self) -> Gtk.Widget:
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         bar.get_style_context().add_class("detach-bar")
-        button = Gtk.Button()
-        button.get_style_context().add_class("detach-button")
-        button.set_relief(Gtk.ReliefStyle.NONE)
-        button.set_tooltip_text("Stacca in una finestra sul monitor principale")
-        button.add(Gtk.Image.new_from_icon_name(
-            "window-new-symbolic", Gtk.IconSize.MENU))
-        button.connect("clicked", lambda _button: self._detach_current_page())
-        button.set_sensitive(False)
-        bar.pack_end(button, False, False, 0)
-        self.detach_button = button
+        reload_button = Gtk.Button()
+        reload_button.set_relief(Gtk.ReliefStyle.NONE)
+        reload_button.set_tooltip_text("Ricarica il tool corrente")
+        reload_icon = Gtk.Image.new_from_icon_name(
+            "view-refresh-symbolic", Gtk.IconSize.MENU)
+        reload_icon.set_pixel_size(PAGE_ACTION_ICON_SIZE)
+        reload_button.add(reload_icon)
+        reload_button.connect("clicked", lambda _button: self._reload_current_page())
+        reload_button.set_sensitive(False)
+
+        detach_button = Gtk.Button()
+        detach_button.get_style_context().add_class("detach-button")
+        detach_button.set_relief(Gtk.ReliefStyle.NONE)
+        detach_button.set_tooltip_text("Stacca in una finestra sul monitor principale")
+        detach_icon = Gtk.Image.new_from_icon_name(
+            "window-new-symbolic", Gtk.IconSize.MENU)
+        detach_icon.set_pixel_size(PAGE_ACTION_ICON_SIZE)
+        detach_button.add(detach_icon)
+        detach_button.connect("clicked", lambda _button: self._detach_current_page())
+        detach_button.set_sensitive(False)
+
+        bar.pack_end(detach_button, False, False, 0)
+        bar.pack_end(reload_button, False, False, 0)
+        for button_config in reversed(self.config.get("quick_launchers", [])):
+            bar.pack_end(
+                self._build_quick_launcher_button(button_config),
+                False,
+                False,
+                0,
+            )
+        self.detach_button = detach_button
+        self.reload_button = reload_button
         return bar
+
+    def _build_quick_launcher_button(self, button_config: dict[str, Any]) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("quick-launcher-button")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text(str(button_config.get("label", "")))
+        icon = Gtk.Image.new_from_icon_name(
+            str(button_config.get("icon", "")), Gtk.IconSize.MENU)
+        icon.set_pixel_size(PAGE_ACTION_ICON_SIZE)
+        button.add(icon)
+        command = button_config["command"]
+        button.connect("clicked", lambda _button: self._launch(command))
+        return button
 
     def _detachable_page(self, page: Gtk.Widget | None) -> bool:
         # Le finestre incorporate con Gtk.Socket sono escluse: staccarle vuol
@@ -1796,6 +1844,29 @@ class AiBarWindow(Gtk.Window):
         window.set_default_size(900, 700)
         window.add(page)
         window.connect("delete-event", self._on_detached_closed, key)
+
+        header = Gtk.HeaderBar(title=title)
+        header.set_show_close_button(True)
+        reload_button = Gtk.Button()
+        reload_button.set_tooltip_text("Ricarica il tool corrente")
+        reload_icon = Gtk.Image.new_from_icon_name(
+            "view-refresh-symbolic", Gtk.IconSize.MENU)
+        reload_icon.set_pixel_size(PAGE_ACTION_ICON_SIZE)
+        reload_button.add(reload_icon)
+        reload_button.connect(
+            "clicked", lambda _button: self._reload_page(window.get_child()))
+        reattach_button = Gtk.Button()
+        reattach_button.set_tooltip_text("Riattacca al pannello")
+        reattach_icon = Gtk.Image.new_from_icon_name(
+            "window-new-symbolic", Gtk.IconSize.MENU)
+        reattach_icon.set_pixel_size(PAGE_ACTION_ICON_SIZE)
+        reattach_button.add(reattach_icon)
+        reattach_button.connect(
+            "clicked", lambda _button: self._reattach(key, window))
+        header.pack_end(reattach_button)
+        header.pack_end(reload_button)
+        window.set_titlebar(header)
+
         self.detached[key] = window
         window.show_all()
         self._place_detached(window)
@@ -1842,6 +1913,58 @@ class AiBarWindow(Gtk.Window):
         self.present()
         self._refresh_launcher_states()
 
+    def _reloadable_page(self, page: Gtk.Widget | None) -> bool:
+        return (
+            page is not None
+            and not isinstance(page, Gtk.Socket)
+            and self._page_key(page) is not None
+        )
+
+    def _reload_current_page(self) -> None:
+        notebook = self.terminal_notebook
+        if notebook is None:
+            return
+        index = notebook.get_current_page()
+        page = notebook.get_nth_page(index) if index >= 0 else None
+        self._reload_page(page)
+
+    def _reload_page(self, page: Gtk.Widget | None) -> None:
+        if not self._reloadable_page(page):
+            return
+        key = self._page_key(page)
+        if key is None:
+            return
+
+        if key in self.embedded:
+            page.reload()
+            return
+
+        notebook = self.terminal_notebook
+        detached_window = self.detached.get(key)
+        if detached_window is None and notebook is None:
+            return
+
+        command = None if key == "__shell__" else key
+        replacement = self._build_terminal(command, width_px=self.panel_width)
+        self.terminals[key] = replacement
+
+        if detached_window is not None:
+            detached_window.remove(page)
+            detached_window.add(replacement)
+            detached_window.present()
+        elif notebook is not None:
+            index = notebook.page_num(page)
+            title = notebook.get_tab_label_text(page) or "Scheda"
+            notebook.remove(page)
+            notebook.insert_page(replacement, Gtk.Label(label=title), index)
+            notebook.set_current_page(index)
+
+        page.destroy()
+        replacement.show_all()
+        self.terminal = replacement
+        replacement.grab_focus()
+        self._refresh_launcher_states(replacement)
+
     def _refresh_launcher_states(self, page: Gtk.Widget | None = None) -> None:
         notebook = self.terminal_notebook
         if page is None and notebook is not None:
@@ -1849,6 +1972,8 @@ class AiBarWindow(Gtk.Window):
             page = notebook.get_nth_page(index) if index >= 0 else None
         if self.detach_button is not None:
             self.detach_button.set_sensitive(self._detachable_page(page))
+        if self.reload_button is not None:
+            self.reload_button.set_sensitive(self._reloadable_page(page))
         for key, button in self.launcher_buttons.items():
             style = button.get_style_context()
             if key in self.detached:

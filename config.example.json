@@ -113,6 +113,18 @@
       ]
     }
   ],
+  "quick_launchers": [
+    {
+      "label": "AnyDesk",
+      "icon": "anydesk",
+      "command": ["anydesk"]
+    },
+    {
+      "label": "LocalSend",
+      "icon": "localsend_app",
+      "command": ["localsend_app"]
+    }
+  ],
   "webview": {
     "hardware_acceleration": "never"
   },

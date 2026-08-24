@@ -110,6 +110,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
             ],
         },
     ],
+    "quick_launchers": [
+        {
+            "label": "AnyDesk",
+            "icon": "anydesk",
+            "command": ["anydesk"],
+        },
+        {
+            "label": "LocalSend",
+            "icon": "localsend_app",
+            "command": ["localsend_app"],
+        },
+    ],
     "terminal": {
         "command": ["hermes"],
         "working_directory": None,
@@ -247,6 +259,9 @@ def validate_config(config: dict[str, Any]) -> None:
             validate_command(item.get("command"), "tray.items[].command")
         elif item.get("command") is not None:
             validate_command(item.get("command"), "tray.items[].command")
+
+    for button in config.get("quick_launchers", []):
+        validate_command(button.get("command"), "quick_launchers[].command")
 
     command = config.get("terminal", {}).get("command")
     if command is not None:
