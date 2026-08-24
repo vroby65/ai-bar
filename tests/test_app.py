@@ -840,6 +840,7 @@ class ClockLayoutTests(unittest.TestCase):
         window.launcher_buttons = {}
         window.detached = {}
         window.detach_button = None
+        window.reload_button = None
         window._build_clock = lambda: Gtk.Label()
         window._build_tray_row = lambda: Gtk.Label()
         window._build_terminal = lambda _command: Gtk.Label()
@@ -1156,6 +1157,8 @@ class DetachTests(unittest.TestCase):
         window.detached = {}
         window.launcher_buttons = {}
         window.detach_button = None
+        window.reload_button = None
+        window.config = {"quick_launchers": []}
         return window
 
     def test_the_first_tab_is_detachable_too(self):
@@ -1166,6 +1169,65 @@ class DetachTests(unittest.TestCase):
 
         self.assertTrue(window._detachable_page(Gtk.Box()))
         self.assertFalse(window._detachable_page(None))
+
+    def test_page_actions_include_reload_for_the_current_tool(self):
+        window = self._window()
+        window._reload_current_page = Mock()
+
+        bar = window._build_detach_bar()
+
+        reload_button = next(
+            child for child in bar.get_children()
+            if child.get_tooltip_text() == "Ricarica il tool corrente"
+        )
+        reload_button.emit("clicked")
+
+        window._reload_current_page.assert_called_once_with()
+        bar.destroy()
+
+    def test_page_actions_include_configured_quick_launchers(self):
+        window = self._window()
+        window.config["quick_launchers"] = [
+            {"label": "AnyDesk", "icon": "anydesk", "command": ["anydesk"]},
+            {
+                "label": "LocalSend",
+                "icon": "localsend_app",
+                "command": ["localsend_app"],
+            },
+        ]
+        window._launch = Mock()
+
+        bar = window._build_detach_bar()
+        buttons = {
+            child.get_tooltip_text(): child
+            for child in bar.get_children()
+            if isinstance(child, Gtk.Button)
+        }
+        buttons["AnyDesk"].emit("clicked")
+        buttons["LocalSend"].emit("clicked")
+
+        icon_sizes = {
+            label: button.get_child().get_pixel_size()
+            for label, button in buttons.items()
+        }
+        detach_icon_size = icon_sizes[
+            "Stacca in una finestra sul monitor principale"
+        ]
+        self.assertGreater(detach_icon_size, 0)
+        self.assertEqual(set(icon_sizes.values()), {detach_icon_size})
+        self.assertEqual(
+            window._launch.call_args_list,
+            [unittest.mock.call(["anydesk"]), unittest.mock.call(["localsend_app"])],
+        )
+        self.assertEqual(
+            buttons["AnyDesk"].get_child().get_icon_name()[0],
+            "anydesk",
+        )
+        self.assertEqual(
+            buttons["LocalSend"].get_child().get_icon_name()[0],
+            "localsend_app",
+        )
+        bar.destroy()
 
     def test_detaching_the_last_tab_leaves_the_area_empty(self):
         # Nessuna scheda di rimpiazzo: le linguette sono nascoste, quindi una
@@ -1187,6 +1249,72 @@ class DetachTests(unittest.TestCase):
 
         self.assertEqual(notebook.get_n_pages(), 0)
         self.assertEqual(list(window.detached), ["zsh"])
+
+    def test_detach_button_in_the_new_window_reattaches_the_tab(self):
+        window = self._window()
+        window.present = Mock()
+        notebook = Gtk.Notebook()
+        window.terminal_notebook = notebook
+        page = Gtk.Box()
+        window.terminals = {"zsh": page}
+        notebook.append_page(page, Gtk.Label(label="Zsh"))
+        notebook.show_all()
+        notebook.set_current_page(0)
+        window._place_detached = Mock()
+        window._reload_page = Mock()
+
+        window._detach_current_page()
+
+        detached = window.detached["zsh"]
+        reload_button = next(
+            child for child in detached.get_titlebar().get_children()
+            if child.get_tooltip_text() == "Ricarica il tool corrente"
+        )
+        reattach_button = next(
+            child for child in detached.get_titlebar().get_children()
+            if child.get_tooltip_text() == "Riattacca al pannello"
+        )
+        self.assertGreater(reload_button.get_child().get_pixel_size(), 0)
+        self.assertEqual(
+            reload_button.get_child().get_pixel_size(),
+            reattach_button.get_child().get_pixel_size(),
+        )
+        reload_button.emit("clicked")
+        reattach_button.emit("clicked")
+
+        window._reload_page.assert_called_once_with(page)
+        self.assertEqual(window.detached, {})
+        self.assertEqual(notebook.get_n_pages(), 1)
+        self.assertIs(notebook.get_nth_page(0), page)
+
+    def test_reload_button_restarts_the_current_terminal(self):
+        window = self._window()
+        notebook = Gtk.Notebook()
+        window.terminal_notebook = notebook
+        previous = Gtk.Box()
+        replacement = Gtk.Box()
+        window.terminals = {"codex": previous}
+        window.panel_width = 400
+        window._build_terminal = Mock(return_value=replacement)
+        notebook.append_page(previous, Gtk.Label(label="Codex"))
+        notebook.show_all()
+        notebook.set_current_page(0)
+
+        window._reload_current_page()
+
+        window._build_terminal.assert_called_once_with("codex", width_px=400)
+        self.assertIs(window.terminals["codex"], replacement)
+        self.assertIs(notebook.get_nth_page(0), replacement)
+        self.assertEqual(notebook.get_tab_label_text(replacement), "Codex")
+
+    def test_reload_button_reloads_the_current_web_app(self):
+        window = self._window()
+        webview = Mock()
+        window.embedded = {"url:https://example.com": webview}
+
+        window._reload_page(webview)
+
+        webview.reload.assert_called_once_with()
 
     def test_a_returning_tab_is_reachable_from_its_button_again(self):
         window = self._window()

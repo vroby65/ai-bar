@@ -52,6 +52,7 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
   - `url`: opens a web app by URL in an embedded WebKit tab (requires WebKit2; falls back to the system browser with `xdg-open` if it is missing)
 - `launcher_groups[].buttons[].url`: the URL for `target: "url"` buttons
 - `launcher_groups[].buttons[].maximized`: opens the external window maximized
+- `quick_launchers`: ordered mini launch buttons shown next to the current-tool reload button; set it to `[]` to hide the area
 - `terminal.command`: shell or command to open in the embedded terminal
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
@@ -60,7 +61,7 @@ The separate button at the left of the volume control opens the configuration as
 
 The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. Tabs are hidden, so the button that opened the page on screen stays highlighted, the same way the window list marks the active window. `window` and `url` buttons work the same way: the app or web app is embedded in its own tab and keeps running while you switch to another tab. Web apps keep cookies and site data across restarts, and while a web tab is active you can use `Ctrl++` or `Ctrl+=` to zoom in and `Ctrl+-` to zoom out. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
 
-A tab can be detached into a window of its own with the button above the content, for when something started in the panel turns into real work. Nothing is restarted: the terminal keeps its process and the page keeps its state, typed text included. The panel falls back to the first tab that is left, or to an empty area if that was the only one. Closing the detached window puts the tab back in the panel rather than ending it, and while a tool is detached its launcher button is outlined and clicking it raises the window.
+A tab can be detached into a window of its own with the button above the content, for when something started in the panel turns into real work. Nothing is restarted: the terminal keeps its process and the page keeps its state, typed text included. Pressing the detach button in the separate window puts the tab back in the panel; closing that window does the same rather than ending the tool. The reload button next to it restarts the current terminal tool or reloads the current web app. The panel falls back to the first tab that is left, or to an empty area if that was the only one, and while a tool is detached its launcher button is outlined and clicking it raises the window.
 
 No replacement tab is created to fill the gap. Tab labels are hidden, so a tab that no launcher button owns could never be reached again and its process would keep running out of sight. Embedded GUI windows are the one thing that cannot be detached: they have a window of their own already, and detaching one would mean dismantling the embedding.
 
