@@ -769,7 +769,7 @@ class AiBarWindow(Gtk.Window):
         self.window_flow.get_style_context().add_class("window-flow")
         self.window_flow.set_selection_mode(Gtk.SelectionMode.NONE)
         self.window_flow.set_min_children_per_line(1)
-        self.window_flow.set_max_children_per_line(3)
+        self.window_flow.set_max_children_per_line(20)
         self.window_flow.set_column_spacing(6)
         self.window_flow.set_row_spacing(6)
 
@@ -902,18 +902,11 @@ class AiBarWindow(Gtk.Window):
         button.set_relief(Gtk.ReliefStyle.NONE)
         button.connect("clicked", lambda _button: self._activate_window(info.xid))
 
-        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         if info.icon is not None:
             image = Gtk.Image.new_from_pixbuf(info.icon)
         else:
             image = Gtk.Image.new_from_icon_name("window-symbolic", Gtk.IconSize.MENU)
-        inner.pack_start(image, False, False, 0)
-
-        label = Gtk.Label(label=info.title)
-        label.set_ellipsize(Pango.EllipsizeMode.END)
-        label.set_max_width_chars(16)
-        inner.pack_start(label, False, False, 0)
-        button.add(inner)
+        button.add(image)
         return button
 
     def _build_launcher_group(self, group: dict[str, Any]) -> Gtk.Widget:
@@ -1137,6 +1130,22 @@ class AiBarWindow(Gtk.Window):
             self.xapp_tray_host.start()
         if self.tray_host is not None:
             self.tray_host.start()
+        if os.environ.get("AI_BAR_READY_FILE"):
+            GLib.timeout_add(50, self._mark_session_ready)
+
+    def _mark_session_ready(self) -> bool:
+        if (
+            self.xapp_tray_host is not None
+            and self.xapp_tray_host.monitor is not None
+            and not self.xapp_tray_host.is_registered()
+        ):
+            return True
+
+        try:
+            Path(os.environ["AI_BAR_READY_FILE"]).touch()
+        except OSError as exc:
+            print(f"ai-bar: impossibile segnalare la tray pronta: {exc}", file=sys.stderr)
+        return False
 
     def _on_configure(self, _window: Gtk.Window, event: Gdk.EventConfigure) -> bool:
         if self.panel_geometry_applied and event.width != self.panel_width:

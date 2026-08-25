@@ -22,6 +22,19 @@ class PackagingTests(unittest.TestCase):
 
         self.assertIn("pipx install --editable", installer)
 
+    def test_installer_links_commands_in_usr_local_bin(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'ln -sfn -- "$AI_BAR_BIN" /usr/local/bin/ai-bar',
+            installer,
+        )
+        self.assertIn(
+            'ln -sfn -- "$PROJECT_DIR/scripts/ai-bar-openbox-session" '
+            "/usr/local/bin/ai-bar-openbox-session",
+            installer,
+        )
+
     def test_installer_and_session_launcher_have_valid_shell_syntax(self):
         for path in (ROOT / "install.sh", ROOT / "scripts" / "ai-bar-openbox-session"):
             subprocess.run(["bash", "-n", path], check=True)
@@ -78,6 +91,68 @@ class PackagingTests(unittest.TestCase):
                 arguments_file.read_text(encoding="utf-8").strip(),
                 f"--config {config_file}",
             )
+
+    def test_session_starts_openbox_only_after_ai_bar_tray_is_ready(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            startup_order = temporary / "startup-order"
+
+            openbox = temporary / "openbox-session"
+            openbox.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    if [[ -n "${AI_BAR_READY_FILE:-}" && -e "$AI_BAR_READY_FILE" ]]; then
+                        printf 'tray-ready\n' > "$AI_BAR_TEST_STARTUP_ORDER"
+                    else
+                        printf 'openbox-first\n' > "$AI_BAR_TEST_STARTUP_ORDER"
+                    fi
+                    sleep 0.1
+                    """
+                ),
+                encoding="utf-8",
+            )
+            openbox.chmod(0o755)
+
+            ai_bar = temporary / "ai-bar"
+            ai_bar.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env bash
+                    if [[ "${1:-}" == "--print-default-config" ]]; then
+                        printf '{}\n'
+                        exit 0
+                    fi
+                    sleep 0.1
+                    touch "$AI_BAR_READY_FILE"
+                    sleep 5
+                    """
+                ),
+                encoding="utf-8",
+            )
+            ai_bar.chmod(0o755)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "AI_BAR_BIN": str(ai_bar),
+                    "AI_BAR_READY_TIMEOUT": "2",
+                    "AI_BAR_TEST_STARTUP_ORDER": str(startup_order),
+                    "HOME": str(temporary),
+                    "OPENBOX_SESSION": str(openbox),
+                    "XDG_CONFIG_HOME": str(temporary / "config"),
+                    "XDG_RUNTIME_DIR": str(temporary),
+                }
+            )
+
+            subprocess.run(
+                ["bash", ROOT / "scripts" / "ai-bar-openbox-session"],
+                check=True,
+                env=environment,
+                timeout=5,
+            )
+
+            self.assertEqual(startup_order.read_text(encoding="utf-8"), "tray-ready\n")
 
     def test_session_launcher_uses_source_checkout_when_requested(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -86,16 +86,17 @@ EOF
     echo "Configurazione openbox creata con il tema Aura Midnight: $HOME/.config/openbox/rc.xml"
 fi
 
+echo "Installazione dei collegamenti dei comandi..."
+sudo ln -sfn -- "$AI_BAR_BIN" /usr/local/bin/ai-bar
+sudo ln -sfn -- "$PROJECT_DIR/scripts/ai-bar-openbox-session" /usr/local/bin/ai-bar-openbox-session
+
 echo "Installazione della sessione AI Bar Openbox..."
-sudo install -Dm755 \
-    "$PROJECT_DIR/scripts/ai-bar-openbox-session" \
-    /usr/local/bin/ai-bar-openbox-session
 sudo install -Dm644 \
     "$PROJECT_DIR/packaging/ai-bar-openbox.desktop" \
     /usr/share/xsessions/ai-bar-openbox.desktop
 
 echo "Installazione completata."
-echo "Tool: $AI_BAR_BIN"
+echo "Tool: /usr/local/bin/ai-bar"
 echo "Sessione: AI Bar Openbox"
 
 case ":$PATH:" in

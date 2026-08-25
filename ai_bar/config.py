@@ -46,6 +46,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "icon": "audio-volume-high-symbolic",
                 "command": ["pavucontrol", "-t", "2"],
             },
+            {
+                "type": "display",
+                "label": "Display",
+                "icon": "preferences-desktop-display-symbolic",
+                "command": ["arandr"],
+                "icon_only": True,
+            },
+            {
+                "type": "screenshot",
+                "label": "Screenshot",
+                "icon": "camera-photo-symbolic",
+                "command": [
+                    "/usr/bin/mate-screenshot",
+                    "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png",
+                ],
+                "icon_only": True,
+            },
         ],
     },
     "launcher_groups": [
@@ -72,7 +89,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                     "maximized": True,
                 },
                 {
-                    "label": "Caja",
+                    "label": "caja",
                     "icon": "system-file-manager-symbolic",
                     "command": ["caja"],
                     "maximized": True,
@@ -80,19 +97,25 @@ DEFAULT_CONFIG: dict[str, Any] = {
             ],
         },
         {
-            "title": "tools",
+            "title": "Tools",
             "columns": 4,
             "buttons": [
                 {
-                    "label": "Hermes",
-                    "icon": "applications-development-symbolic",
-                    "command": ["hermes"],
+                    "label": "menu",
+                    "icon": "view-app-grid-symbolic",
+                    "command": ["menu"],
                     "target": "terminal",
                 },
                 {
-                    "label": "Codex",
-                    "icon": "utilities-terminal-symbolic",
-                    "command": ["codex"],
+                    "label": "ZA",
+                    "icon": "python",
+                    "command": ["za.py"],
+                    "target": "terminal",
+                },
+                {
+                    "label": "or-codex",
+                    "icon": "system-run-symbolic",
+                    "command": ["or-codex"],
                     "target": "terminal",
                 },
                 {
@@ -100,6 +123,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
                     "icon": "accessories-text-editor-symbolic",
                     "command": ["ds-code"],
                     "target": "terminal",
+                },
+                {
+                    "label": "Codex",
+                    "icon": "format-text-code",
+                    "command": ["codex"],
+                    "target": "terminal",
+                },
+                {
+                    "label": "Calc",
+                    "icon": "accessories-calculator-symbolic",
+                    "command": ["gnome-calculator"],
+                    "target": "window",
+                },
+                {
+                    "label": "Meteo",
+                    "icon": "weather-few-clouds-symbolic",
+                    "url": "https://www.ilmeteo.it",
+                    "target": "url",
                 },
                 {
                     "label": "terminal",
@@ -117,13 +158,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "command": ["anydesk"],
         },
         {
+            "label": "TeamViewer",
+            "icon": "teamviewer",
+            "command": ["teamviewer"],
+        },
+        {
+            "label": "RustDesk",
+            "icon": "rustdesk",
+            "command": ["rustdesk"],
+        },
+        {
             "label": "LocalSend",
             "icon": "localsend_app",
             "command": ["localsend_app"],
         },
     ],
     "terminal": {
-        "command": ["hermes"],
+        "command": ["menu"],
         "working_directory": None,
         "font": "Monospace 10",
         "scrollback_lines": 10000,

@@ -34,9 +34,11 @@ Keep every change small and traceable to the request:
 - `ai_bar/__main__.py`: forwards execution to `ai_bar.app:main`.
 - `config.example.json`: user-facing example that must stay aligned with public
   options in `DEFAULT_CONFIG`.
-- `install.sh`: Debian/Ubuntu/Mint dependencies and editable `pipx` installation.
-- `scripts/ai-bar-openbox-session`: starts Openbox, supervises and restarts `ai-bar`,
-  and safely forwards reboot and power-off requests.
+- `install.sh`: Debian/Ubuntu/Mint dependencies, editable `pipx` installation, and
+  command links in `/usr/local/bin`.
+- `scripts/ai-bar-openbox-session`: coordinates `ai-bar` and Openbox startup,
+  supervises and restarts the panel, and safely forwards reboot and power-off
+  requests.
 - `packaging/`: desktop session and Openbox theme installed by the project.
 - `tests/`: `unittest` tests organized by module or subsystem.
 
@@ -52,8 +54,10 @@ home directory to implement repository behavior.
    available optional integrations.
 4. The terminal notebook hides its tabs. Launcher buttons provide access to pages,
    which use keys produced by `launcher_page_key` and `terminal_session_key`.
-5. The Openbox session runs and, when needed, restarts the `ai-bar` process from
-   either the source checkout or the installed command.
+5. The session starts `ai-bar` first and waits for its tray hosts to become ready
+   before starting Openbox and its autostart applications. It then restarts the
+   `ai-bar` process when needed, from either the source checkout or the installed
+   command.
 
 The default user configuration is `$XDG_CONFIG_HOME/ai-bar/config.json`, or
 `~/.config/ai-bar/config.json`. WebKit cookies, favicons, and icon cache are runtime
