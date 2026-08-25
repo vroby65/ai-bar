@@ -223,6 +223,14 @@ class XAppStatusIconHost:
         self.monitor_handlers.clear()
         self.monitor = None
 
+    def is_registered(self) -> bool:
+        if XApp is None or self.monitor is None:
+            return False
+        try:
+            return bool(XApp.StatusIcon.any_monitors())
+        except Exception:
+            return False
+
     def _on_icon_added(self, _monitor: Any, proxy: Any) -> None:
         key = icon_key(proxy)
         if key in self.buttons:

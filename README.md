@@ -11,7 +11,8 @@ A GTK side panel similar to a desktop bar, with the date and time at the top, a 
 Run the script as a regular user, without `sudo`: it requests elevated privileges only to install the system packages and session. The installer:
 
 - installs the dependencies on Debian, Ubuntu, or Linux Mint
-- installs the `ai-bar` command with `pipx` in editable mode
+- installs the `ai-bar` command with `pipx` in editable mode and links `ai-bar`
+  and `ai-bar-openbox-session` into `/usr/local/bin`
 - creates `~/.config/ai-bar/config.json` if it does not exist
 - installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
 - installs the `AI Bar Openbox` session for the login manager

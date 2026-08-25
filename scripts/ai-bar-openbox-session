@@ -61,11 +61,6 @@ start_polkit_agent() {
 }
 
 start_polkit_agent
-
-"$OPENBOX_SESSION" &
-openbox_pid=$!
-
-sleep "${AI_BAR_START_DELAY:-1}"
 run_session_action() {
     local action="$1"
     local output
@@ -97,7 +92,7 @@ run_ai_bar() {
     trap 'run_session_action reboot' USR1
     trap 'run_session_action poweroff' USR2
 
-    while kill -0 "$openbox_pid" 2>/dev/null; do
+    while true; do
         if $USE_SOURCE_AI_BAR; then
             PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
                 "$PYTHON_BIN" -m ai_bar --config "$CONFIG_FILE" &
@@ -116,10 +111,6 @@ run_ai_bar() {
         done
         trap - INT TERM
 
-        if ! kill -0 "$openbox_pid" 2>/dev/null; then
-            break
-        fi
-
         echo "ai-bar-openbox-session: ai-bar terminato (stato $ai_bar_status), riavvio..." >&2
         sleep 1
     done
@@ -127,16 +118,35 @@ run_ai_bar() {
     rm -f -- "$AI_BAR_SESSION_RESULT" "$AI_BAR_SESSION_RESULT.tmp"
 }
 
+AI_BAR_READY_FILE="${XDG_RUNTIME_DIR:-$CONFIG_DIR}/ai-bar-session-ready-$BASHPID"
+export AI_BAR_READY_FILE
+rm -f -- "$AI_BAR_READY_FILE"
+
 run_ai_bar &
 bar_pid=$!
 
-trap 'kill "$bar_pid" 2>/dev/null; kill "$openbox_pid" 2>/dev/null' INT TERM EXIT
+ready_timeout="${AI_BAR_READY_TIMEOUT:-${AI_BAR_START_DELAY:-10}}"
+if [ "$ready_timeout" -gt 0 ]; then
+    ready_deadline=$((SECONDS + ready_timeout))
+    while [ ! -e "$AI_BAR_READY_FILE" ] && [ "$SECONDS" -lt "$ready_deadline" ]; do
+        sleep 0.05
+    done
+fi
+if [ "$ready_timeout" -gt 0 ] && [ ! -e "$AI_BAR_READY_FILE" ]; then
+    echo "ai-bar-openbox-session: tray non pronta entro ${ready_timeout}s, avvio comunque Openbox." >&2
+fi
+
+"$OPENBOX_SESSION" &
+openbox_pid=$!
+
+trap 'kill "$bar_pid" 2>/dev/null; kill "$openbox_pid" 2>/dev/null; rm -f -- "$AI_BAR_READY_FILE"' INT TERM EXIT
 
 wait "$openbox_pid"
 status=$?
 
 kill "$bar_pid" 2>/dev/null
 wait "$bar_pid" 2>/dev/null || true
+rm -f -- "$AI_BAR_READY_FILE"
 trap - INT TERM EXIT
 
 exit "$status"

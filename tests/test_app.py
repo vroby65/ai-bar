@@ -51,7 +51,7 @@ class ClockLayoutTests(unittest.TestCase):
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_configuration_assistant_is_separate_and_before_volume(
+    def test_tray_row_places_assistant_before_volume_and_keeps_windows_compact(
         self,
         _xapp_host,
         _xembed_host,
@@ -83,6 +83,7 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertNotIn(assistant_button, volume_control.get_children())
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
+        self.assertEqual(window.window_flow.get_max_children_per_line(), 20)
         assistant_button.emit("clicked")
         window._open_configuration_assistant.assert_called_once_with()
         status_area.destroy()
@@ -146,9 +147,11 @@ class ClockLayoutTests(unittest.TestCase):
 
         button = window._build_window_button(WindowInfo(1, "Firefox", False, icon))
 
-        image = button.get_child().get_children()[0]
+        image = button.get_child()
+        self.assertIsInstance(image, Gtk.Image)
         self.assertEqual(image.get_storage_type(), Gtk.ImageType.PIXBUF)
         self.assertIsNotNone(image.get_pixbuf())
+        self.assertEqual(button.get_tooltip_text(), "Firefox")
         button.destroy()
 
     def test_window_button_falls_back_to_the_generic_icon(self):
@@ -156,7 +159,8 @@ class ClockLayoutTests(unittest.TestCase):
 
         button = window._build_window_button(WindowInfo(1, "Finestra", False, None))
 
-        image = button.get_child().get_children()[0]
+        image = button.get_child()
+        self.assertIsInstance(image, Gtk.Image)
         self.assertEqual(image.get_icon_name()[0], "window-symbolic")
         button.destroy()
 
@@ -752,6 +756,41 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(len(TRAY_COLOR_VALUES), 12)
         self.assertTrue(all(0 <= value <= 65535 for value in TRAY_COLOR_VALUES))
         self.assertGreater(TRAY_COLOR_VALUES[0], 32768)
+
+    def test_realize_marks_session_ready_after_starting_tray_hosts(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.get_window = Mock(return_value=Mock())
+        window._apply_panel_geometry = Mock()
+        window._apply_strut = Mock()
+        window._start_window_list = Mock()
+        window._focus_terminal = Mock()
+        window.xapp_tray_host = Mock()
+        window.tray_host = Mock()
+        events = []
+        window.xapp_tray_host.start.side_effect = lambda: events.append("xapp")
+        window.tray_host.start.side_effect = lambda: events.append("xembed")
+        window.xapp_tray_host.is_registered.side_effect = [False, True]
+        ready_callbacks = []
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            ready_file = Path(temporary_directory) / "tray-ready"
+            with (
+                patch.dict(os.environ, {"AI_BAR_READY_FILE": str(ready_file)}),
+                patch("ai_bar.app.GdkX11.X11Window.get_xid", return_value=42),
+                patch("ai_bar.app.X11SuperToggle"),
+                patch("ai_bar.app.GLib.idle_add"),
+                patch(
+                    "ai_bar.app.GLib.timeout_add",
+                    side_effect=lambda _interval, callback: ready_callbacks.append(callback),
+                ),
+            ):
+                window._on_realize(None)
+                self.assertEqual(events, ["xapp", "xembed"])
+                self.assertFalse(ready_file.exists())
+                self.assertTrue(ready_callbacks[0]())
+                self.assertFalse(ready_file.exists())
+                self.assertFalse(ready_callbacks[0]())
+                self.assertTrue(ready_file.exists())
 
     def test_volume_status_from_wpctl(self):
         self.assertEqual(volume_status_from_wpctl("Volume: 0.40"), "40%")

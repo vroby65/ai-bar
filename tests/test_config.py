@@ -39,6 +39,11 @@ class MonitorConfigTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_example_matches_default_config(self):
+        example = Path(__file__).resolve().parents[1] / "config.example.json"
+
+        self.assertEqual(load_config(example), default_config())
+
     def test_default_panel_matches_requested_shape(self):
         config = default_config()
 
@@ -49,11 +54,15 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(all(button["maximized"] for button in config["launcher_groups"][0]["buttons"]))
         self.assertEqual(
             [button["label"] for button in config["launcher_groups"][1]["buttons"]],
-            ["Hermes", "Codex", "DS Code", "terminal"],
+            ["menu", "ZA", "or-codex", "DS Code", "Codex", "Calc", "Meteo", "terminal"],
         )
-        self.assertTrue(all(button["target"] == "terminal" for button in config["launcher_groups"][1]["buttons"]))
-        self.assertEqual(config["terminal"]["command"], ["hermes"])
-        self.assertEqual([item["type"] for item in config["tray"]["items"]], ["volume"])
+        self.assertEqual(config["launcher_groups"][1]["buttons"][5]["target"], "window")
+        self.assertEqual(config["launcher_groups"][1]["buttons"][6]["target"], "url")
+        self.assertEqual(config["terminal"]["command"], ["menu"])
+        self.assertEqual(
+            [item["type"] for item in config["tray"]["items"]],
+            ["volume", "display", "screenshot"],
+        )
         self.assertEqual(config["tray"]["items"][0]["command"], ["pavucontrol", "-t", "2"])
         self.assertEqual(
             [button["label"] for button in config["session_buttons"]],
@@ -63,7 +72,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["session_buttons"][3]["command"], ["systemctl", "poweroff"])
         self.assertEqual(
             [button["label"] for button in config["quick_launchers"]],
-            ["AnyDesk", "LocalSend"],
+            ["AnyDesk", "TeamViewer", "RustDesk", "LocalSend"],
         )
 
     def test_user_config_overrides_nested_values_without_losing_defaults(self):

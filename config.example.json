@@ -34,7 +34,7 @@
         "type": "screenshot",
         "label": "Screenshot",
         "icon": "camera-photo-symbolic",
-        "command": ["scrot", "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png"],
+        "command": ["/usr/bin/mate-screenshot", "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png"],
         "icon_only": true
       }
     ]
@@ -63,7 +63,7 @@
           "maximized": true
         },
         {
-          "label": "Caja",
+          "label": "caja",
           "icon": "system-file-manager-symbolic",
           "command": ["caja"],
           "maximized": true
@@ -71,19 +71,25 @@
       ]
     },
     {
-      "title": "tools",
+      "title": "Tools",
       "columns": 4,
       "buttons": [
         {
-          "label": "Hermes",
-          "icon": "applications-development-symbolic",
-          "command": ["hermes"],
+          "label": "menu",
+          "icon": "view-app-grid-symbolic",
+          "command": ["menu"],
           "target": "terminal"
         },
         {
-          "label": "Codex",
-          "icon": "utilities-terminal-symbolic",
-          "command": ["codex"],
+          "label": "ZA",
+          "icon": "python",
+          "command": ["za.py"],
+          "target": "terminal"
+        },
+        {
+          "label": "or-codex",
+          "icon": "system-run-symbolic",
+          "command": ["or-codex"],
           "target": "terminal"
         },
         {
@@ -93,22 +99,28 @@
           "target": "terminal"
         },
         {
+          "label": "Codex",
+          "icon": "format-text-code",
+          "command": ["codex"],
+          "target": "terminal"
+        },
+        {
+          "label": "Calc",
+          "icon": "accessories-calculator-symbolic",
+          "command": ["gnome-calculator"],
+          "target": "window"
+        },
+        {
+          "label": "Meteo",
+          "icon": "weather-few-clouds-symbolic",
+          "url": "https://www.ilmeteo.it",
+          "target": "url"
+        },
+        {
           "label": "terminal",
           "icon": "utilities-terminal-symbolic",
           "command": ["fish"],
           "target": "terminal"
-        },
-        {
-          "label": "Caja",
-          "icon": "system-file-manager-symbolic",
-          "command": ["caja"],
-          "target": "window"
-        },
-        {
-          "label": "Chat",
-          "icon": "web-browser-symbolic",
-          "url": "https://example.com",
-          "target": "url"
         }
       ]
     }
@@ -120,6 +132,16 @@
       "command": ["anydesk"]
     },
     {
+      "label": "TeamViewer",
+      "icon": "teamviewer",
+      "command": ["teamviewer"]
+    },
+    {
+      "label": "RustDesk",
+      "icon": "rustdesk",
+      "command": ["rustdesk"]
+    },
+    {
       "label": "LocalSend",
       "icon": "localsend_app",
       "command": ["localsend_app"]
@@ -129,7 +151,7 @@
     "hardware_acceleration": "never"
   },
   "terminal": {
-    "command": ["hermes"],
+    "command": ["menu"],
     "working_directory": null,
     "font": "Monospace 10",
     "scrollback_lines": 10000
