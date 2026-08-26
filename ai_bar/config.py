@@ -37,7 +37,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "tray": {
         "xembed": True,
-        "icon_size": 24,
+        "icon_size": 16,
         "status_refresh_seconds": 5,
         "items": [
             {
@@ -156,21 +156,25 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "label": "AnyDesk",
             "icon": "anydesk",
             "command": ["anydesk"],
+            "integrated": False,
         },
         {
             "label": "TeamViewer",
             "icon": "teamviewer",
             "command": ["teamviewer"],
+            "integrated": False,
         },
         {
             "label": "RustDesk",
             "icon": "rustdesk",
             "command": ["rustdesk"],
+            "integrated": False,
         },
         {
             "label": "LocalSend",
             "icon": "localsend_app",
             "command": ["localsend_app"],
+            "integrated": False,
         },
     ],
     "terminal": {
@@ -313,6 +317,8 @@ def validate_config(config: dict[str, Any]) -> None:
 
     for button in config.get("quick_launchers", []):
         validate_command(button.get("command"), "quick_launchers[].command")
+        if not isinstance(button.get("integrated", False), bool):
+            raise ConfigError("quick_launchers[].integrated deve essere true oppure false.")
 
     command = config.get("terminal", {}).get("command")
     if command is not None:

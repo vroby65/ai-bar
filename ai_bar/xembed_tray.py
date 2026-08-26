@@ -14,7 +14,7 @@ except Exception:  # pragma: no cover - exercised only on systems without python
 
 
 SYSTEM_TRAY_REQUEST_DOCK = 0
-TRAY_BACKGROUND_RGB = (0x24 * 257, 0x28 * 257, 0x29 * 257)
+TRAY_BACKGROUND_RGB = (0x15 * 257, 0x18 * 257, 0x19 * 257)
 TRAY_COLOR_VALUES = [
     0xF2 * 257,
     0xF2 * 257,
@@ -31,8 +31,22 @@ TRAY_COLOR_VALUES = [
 ]
 
 
+class XEmbedIconBin(Gtk.Bin):
+    def __init__(self, icon_size: int) -> None:
+        super().__init__()
+        self.icon_size = icon_size
+        self.set_halign(Gtk.Align.CENTER)
+        self.set_valign(Gtk.Align.CENTER)
+
+    def do_get_preferred_width(self) -> tuple[int, int]:
+        return self.icon_size, self.icon_size
+
+    def do_get_preferred_height(self) -> tuple[int, int]:
+        return self.icon_size, self.icon_size
+
+
 class XEmbedTrayHost:
-    def __init__(self, container: Gtk.FlowBox, icon_size: int = 24) -> None:
+    def __init__(self, container: Gtk.FlowBox, icon_size: int = 16) -> None:
         self.container = container
         self.icon_size = icon_size
         self.display: Any = None
@@ -174,10 +188,12 @@ class XEmbedTrayHost:
         cell.set_visible_window(True)
         cell.set_size_request(self.icon_size + 8, self.icon_size + 8)
 
+        icon_bin = XEmbedIconBin(self.icon_size)
         socket = Gtk.Socket()
         socket.set_size_request(self.icon_size, self.icon_size)
         socket.connect("plug-removed", self._on_plug_removed, xid)
-        cell.add(socket)
+        icon_bin.add(socket)
+        cell.add(icon_bin)
         self.container.insert(cell, -1)
         flow_child = cell.get_parent()
         cell.show_all()

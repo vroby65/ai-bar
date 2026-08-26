@@ -45,6 +45,7 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `panel.monitor`: which monitor holds the panel, by index or connector name such as `DP-1`; unset uses the primary one
 - `panel.launch_monitor`: where windows started from the panel should appear, by index or connector name, or `auto` for the primary monitor; unset leaves placement to the window manager
 - `tray.items`: side items such as volume, Telegram, or custom commands
+- `tray.icon_size`: size of XApp and XEmbed tray icons, default `16`
 - `tray.items[].icon_only`: `true` shows only the icon for that item, without the text label
 - `launcher_groups`: groups of buttons, icons, and commands
 - `launcher_groups[].buttons[].target`: where the button opens its content — all inside the panel:
@@ -54,6 +55,7 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `launcher_groups[].buttons[].url`: the URL for `target: "url"` buttons
 - `launcher_groups[].buttons[].maximized`: opens the external window maximized
 - `quick_launchers`: ordered mini launch buttons shown next to the current-tool reload button; set it to `[]` to hide the area
+- `quick_launchers[].integrated`: `true` embeds the GUI application in the panel; `false` (the default) opens it in its own window
 - `terminal.command`: shell or command to open in the embedded terminal
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown

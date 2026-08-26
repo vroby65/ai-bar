@@ -65,6 +65,7 @@ from .xembed_tray import XEmbedTrayHost
 CLOCK_VERTICAL_SPACING = 2
 CLOCK_HORIZONTAL_SPACING = 8
 WINDOW_LIST_REFRESH_SECONDS = 2
+WINDOW_ICON_SIZE = 20
 PANEL_ANIMATION_INTERVAL_MS = 16
 PANEL_ANIMATION_MIN_STEP = 18
 VOLUME_UPDATE_DELAY_MS = 120
@@ -546,6 +547,10 @@ button.launcher-button {
   min-height: 60px;
 }
 
+button.launcher-button.icon-only-launcher {
+  min-height: 36px;
+}
+
 .status-area {
   margin-bottom: 2px;
 }
@@ -554,17 +559,21 @@ button.launcher-button {
   margin-bottom: 0;
 }
 
+.tray-window-separator {
+  background-color: #c0c0c0;
+}
+
 .window-flow {
   margin-top: 2px;
 }
 
 .tray-icon-cell {
-  background-color: #242829;
-  border: 1px solid #303638;
+  background: transparent;
+  border: 0;
   border-radius: 6px;
-  min-height: 30px;
-  min-width: 30px;
-  padding: 3px;
+  min-height: 24px;
+  min-width: 24px;
+  padding: 2px;
 }
 
 .terminal-wrap {
@@ -780,6 +789,9 @@ class AiBarWindow(Gtk.Window):
 
         status_area.pack_start(status_flow, False, False, 0)
         status_area.pack_start(tray_flow, False, False, 0)
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        separator.get_style_context().add_class("tray-window-separator")
+        status_area.pack_start(separator, False, False, 0)
         status_area.pack_start(self.window_flow, False, False, 0)
         return status_area
 
@@ -903,9 +915,15 @@ class AiBarWindow(Gtk.Window):
         button.connect("clicked", lambda _button: self._activate_window(info.xid))
 
         if info.icon is not None:
-            image = Gtk.Image.new_from_pixbuf(info.icon)
+            icon = info.icon.scale_simple(
+                WINDOW_ICON_SIZE,
+                WINDOW_ICON_SIZE,
+                GdkPixbuf.InterpType.BILINEAR,
+            )
+            image = Gtk.Image.new_from_pixbuf(icon)
         else:
             image = Gtk.Image.new_from_icon_name("window-symbolic", Gtk.IconSize.MENU)
+            image.set_pixel_size(WINDOW_ICON_SIZE)
         button.add(image)
         return button
 
@@ -928,15 +946,19 @@ class AiBarWindow(Gtk.Window):
         flow.set_max_children_per_line(max(1, len(buttons)))
 
         for button_config in buttons:
-            button = self._build_launcher_button(button_config)
+            button = self._build_launcher_button(button_config, show_label=bool(title))
             self._add_flow_child(flow, button)
 
         box.pack_start(flow, False, False, 0)
         return box
 
-    def _build_launcher_button(self, button_config: dict[str, Any]) -> Gtk.Widget:
+    def _build_launcher_button(
+        self, button_config: dict[str, Any], show_label: bool = True
+    ) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("launcher-button")
+        if not show_label:
+            button.get_style_context().add_class("icon-only-launcher")
         button.set_relief(Gtk.ReliefStyle.NONE)
         button.set_hexpand(True)
         button.set_halign(Gtk.Align.FILL)
@@ -992,11 +1014,12 @@ class AiBarWindow(Gtk.Window):
             if target == "url":
                 self._apply_favicon(image, str(button_config.get("url", "")))
 
-        label = Gtk.Label(label=str(button_config.get("label", "")))
-        label.set_ellipsize(Pango.EllipsizeMode.END)
-        label.set_max_width_chars(10)
-        label.set_justify(Gtk.Justification.CENTER)
-        inner.pack_start(label, False, False, 0)
+        if show_label:
+            label = Gtk.Label(label=str(button_config.get("label", "")))
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_max_width_chars(10)
+            label.set_justify(Gtk.Justification.CENTER)
+            inner.pack_start(label, False, False, 0)
 
         button.add(inner)
         return button
@@ -1816,7 +1839,14 @@ class AiBarWindow(Gtk.Window):
         icon.set_pixel_size(PAGE_ACTION_ICON_SIZE)
         button.add(icon)
         command = button_config["command"]
-        button.connect("clicked", lambda _button: self._launch(command))
+        if button_config.get("integrated", False):
+            label = str(button_config.get("label", ""))
+            button.connect(
+                "clicked",
+                lambda _button: self._switch_embedded_window(command, label),
+            )
+        else:
+            button.connect("clicked", lambda _button: self._launch(command))
         return button
 
     def _detachable_page(self, page: Gtk.Widget | None) -> bool:

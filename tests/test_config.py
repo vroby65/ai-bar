@@ -50,6 +50,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["panel"]["width"], 400)
         self.assertEqual(config["panel"]["side"], "left")
         self.assertTrue(config["panel"]["resizable"])
+        self.assertEqual(config["tray"]["icon_size"], 16)
         self.assertEqual(config["launcher_groups"][0]["buttons"][0]["label"], "Terminale")
         self.assertTrue(all(button["maximized"] for button in config["launcher_groups"][0]["buttons"]))
         self.assertEqual(
@@ -73,6 +74,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(
             [button["label"] for button in config["quick_launchers"]],
             ["AnyDesk", "TeamViewer", "RustDesk", "LocalSend"],
+        )
+        self.assertTrue(
+            all(not button["integrated"] for button in config["quick_launchers"])
         )
 
     def test_user_config_overrides_nested_values_without_losing_defaults(self):
@@ -118,6 +122,27 @@ class ConfigTests(unittest.TestCase):
             path = Path(directory) / "config.json"
             path.write_text(
                 json.dumps({"quick_launchers": [{"label": "Broken"}]}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ConfigError):
+                load_config(path)
+
+    def test_load_config_validates_quick_launcher_integration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "quick_launchers": [
+                            {
+                                "label": "Broken",
+                                "command": ["broken"],
+                                "integrated": "yes",
+                            }
+                        ]
+                    }
+                ),
                 encoding="utf-8",
             )
 

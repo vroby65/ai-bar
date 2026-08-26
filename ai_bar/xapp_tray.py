@@ -172,7 +172,7 @@ class XAppStatusIconButton(Gtk.Button):
 
 class XAppStatusIconHost:
     def __init__(
-        self, container: Gtk.FlowBox, icon_size: int = 24, panel_side: str = "left"
+        self, container: Gtk.FlowBox, icon_size: int = 16, panel_side: str = "left"
     ) -> None:
         self.container = container
         self.icon_size = icon_size

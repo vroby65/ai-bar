@@ -35,6 +35,11 @@ class FakeMonitor:
 
 
 class XAppStatusIconHostTests(unittest.TestCase):
+    def test_default_icons_are_compact(self):
+        host = XAppStatusIconHost(container=object())
+
+        self.assertEqual(host.icon_size, 16)
+
     def test_hidden_icon_stays_hidden_when_tray_is_shown(self):
         class FakeProxy:
             def __init__(self):

@@ -17,6 +17,7 @@ from gi.repository import Gdk, GdkPixbuf, Gtk, Vte
 
 from ai_bar.app import (
     AiBarWindow,
+    CSS,
     WindowInfo,
     X,
     X11SuperToggle,
@@ -48,10 +49,21 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 
 
 class ClockLayoutTests(unittest.TestCase):
+    def test_app_tray_icons_have_no_background_or_border(self):
+        tray_css = CSS.split(".tray-icon-cell {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("background: transparent;", tray_css)
+        self.assertIn("border: 0;", tray_css)
+
+    def test_tray_window_separator_is_light_gray(self):
+        separator_css = CSS.split(".tray-window-separator {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("background-color: #c0c0c0;", separator_css)
+
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_tray_row_places_assistant_before_volume_and_keeps_windows_compact(
+    def test_tray_row_places_assistant_before_volume_and_separates_windows(
         self,
         _xapp_host,
         _xembed_host,
@@ -84,6 +96,13 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertNotIn(assistant_button, volume_control.get_children())
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
         self.assertEqual(window.window_flow.get_max_children_per_line(), 20)
+        separator = status_area.get_children()[2]
+        self.assertIsInstance(separator, Gtk.Separator)
+        self.assertEqual(separator.get_orientation(), Gtk.Orientation.HORIZONTAL)
+        self.assertTrue(
+            separator.get_style_context().has_class("tray-window-separator")
+        )
+        self.assertIs(status_area.get_children()[3], window.window_flow)
         assistant_button.emit("clicked")
         window._open_configuration_assistant.assert_called_once_with()
         status_area.destroy()
@@ -151,6 +170,8 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIsInstance(image, Gtk.Image)
         self.assertEqual(image.get_storage_type(), Gtk.ImageType.PIXBUF)
         self.assertIsNotNone(image.get_pixbuf())
+        self.assertEqual(image.get_pixbuf().get_width(), 20)
+        self.assertEqual(image.get_pixbuf().get_height(), 20)
         self.assertEqual(button.get_tooltip_text(), "Firefox")
         button.destroy()
 
@@ -162,6 +183,7 @@ class ClockLayoutTests(unittest.TestCase):
         image = button.get_child()
         self.assertIsInstance(image, Gtk.Image)
         self.assertEqual(image.get_icon_name()[0], "window-symbolic")
+        self.assertEqual(image.get_pixel_size(), 20)
         button.destroy()
 
     def test_maximized_launcher_requests_a_maximized_window(self):
@@ -321,7 +343,39 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(flow.get_max_children_per_line(), 3)
         self.assertEqual(len(flow.get_children()), 3)
         for child in flow.get_children():
-            self.assertTrue(child.get_child().get_hexpand())
+            button = child.get_child()
+            self.assertTrue(button.get_hexpand())
+            self.assertTrue(button.get_style_context().has_class("icon-only-launcher"))
+            self.assertFalse(
+                any(isinstance(widget, Gtk.Label) for widget in button.get_child().get_children())
+            )
+
+        group.destroy()
+
+    def test_titled_launcher_group_keeps_button_labels(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.launcher_buttons = {}
+
+        group = window._build_launcher_group(
+            {
+                "title": "Tools",
+                "buttons": [
+                    {
+                        "label": "Codex",
+                        "icon": "utilities-terminal-symbolic",
+                        "command": ["codex"],
+                        "target": "terminal",
+                    },
+                ],
+            }
+        )
+
+        flow = group.get_children()[1]
+        button = flow.get_children()[0].get_child()
+        self.assertFalse(button.get_style_context().has_class("icon-only-launcher"))
+        self.assertTrue(
+            any(isinstance(widget, Gtk.Label) for widget in button.get_child().get_children())
+        )
 
         group.destroy()
 
@@ -513,7 +567,7 @@ class ClockLayoutTests(unittest.TestCase):
         window.xapp_tray_host = None
 
         status_area = window._build_tray_row()
-        status_flow, tray_flow, _window_flow = status_area.get_children()
+        status_flow, tray_flow, _separator, _window_flow = status_area.get_children()
 
         self.assertEqual(status_flow.get_direction(), Gtk.TextDirection.LTR)
         self.assertEqual(tray_flow.get_direction(), Gtk.TextDirection.LTR)
@@ -1232,9 +1286,11 @@ class DetachTests(unittest.TestCase):
                 "label": "LocalSend",
                 "icon": "localsend_app",
                 "command": ["localsend_app"],
+                "integrated": True,
             },
         ]
         window._launch = Mock()
+        window._switch_embedded_window = Mock()
 
         bar = window._build_detach_bar()
         buttons = {
@@ -1256,7 +1312,11 @@ class DetachTests(unittest.TestCase):
         self.assertEqual(set(icon_sizes.values()), {detach_icon_size})
         self.assertEqual(
             window._launch.call_args_list,
-            [unittest.mock.call(["anydesk"]), unittest.mock.call(["localsend_app"])],
+            [unittest.mock.call(["anydesk"])],
+        )
+        window._switch_embedded_window.assert_called_once_with(
+            ["localsend_app"],
+            "LocalSend",
         )
         self.assertEqual(
             buttons["AnyDesk"].get_child().get_icon_name()[0],
