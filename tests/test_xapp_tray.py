@@ -1,12 +1,12 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import gi
 
 gi.require_version("Gtk", "3.0")
 
-from gi.repository import Gtk
+from gi.repository import Gdk, Gtk
 
 from ai_bar.xapp_tray import (
     XAppStatusIconButton,
@@ -35,6 +35,26 @@ class FakeMonitor:
 
 
 class XAppStatusIconHostTests(unittest.TestCase):
+    def test_primary_click_forwards_press_and_release(self):
+        proxy = Mock()
+        proxy.props = SimpleNamespace(
+            icon_name="mintupdate-updates-available-symbolic",
+            label="",
+            tooltip_text="1 aggiornamento disponibile",
+            visible=True,
+        )
+        proxy.connect.side_effect = [1, 2, 3, 4]
+        button = XAppStatusIconButton(proxy, 16, "left")
+
+        button.emit("clicked")
+
+        self.assertEqual(proxy.call_button_press.call_count, 1)
+        self.assertEqual(proxy.call_button_release.call_count, 1)
+        self.assertEqual(proxy.call_button_press.call_args.args[2], Gdk.BUTTON_PRIMARY)
+        self.assertEqual(proxy.call_button_release.call_args.args[2], Gdk.BUTTON_PRIMARY)
+        button.close()
+        button.destroy()
+
     def test_default_icons_are_compact(self):
         host = XAppStatusIconHost(container=object())
 

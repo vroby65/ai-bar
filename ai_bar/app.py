@@ -183,6 +183,37 @@ def clean_window_title(title: str) -> str:
     return " ".join(title.split()) or "Finestra"
 
 
+def application_id(value: str) -> str:
+    name = Path(value).name.lower()
+    if name.endswith(".desktop"):
+        name = name[:-8]
+    return re.sub(r"[^a-z0-9]+", "-", name).strip("-")
+
+
+def application_ids_match(launcher_id: str, window_id: str) -> bool:
+    launcher_id = application_id(launcher_id)
+    window_id = application_id(window_id)
+    if not launcher_id or not window_id:
+        return False
+    return (
+        launcher_id == window_id
+        or window_id.startswith(launcher_id + "-")
+        or launcher_id.startswith(window_id + "-")
+        or window_id.endswith("-" + launcher_id)
+        or launcher_id.endswith("-" + window_id)
+    )
+
+
+def launcher_application_id(button_config: dict[str, Any]) -> str:
+    command = button_config.get("command")
+    if isinstance(command, str):
+        parts = shlex.split(command)
+        executable = parts[0] if parts else ""
+    else:
+        executable = command[0] if command else ""
+    return application_id(str(executable))
+
+
 def terminal_tab_label(command: str | list[str] | None) -> str:
     if not command:
         return "Terminale"
@@ -253,6 +284,34 @@ def centered_position(area: Any, width: int, height: int) -> tuple[int, int]:
     return x, y
 
 
+def spiral_rectangles(area: Any, count: int) -> list[tuple[int, int, int, int]]:
+    rectangles = []
+    x, y, width, height = area.x, area.y, area.width, area.height
+    for index in range(max(0, count - 1)):
+        direction = index % 4
+        if direction == 0:
+            split = width // 2
+            rectangles.append((x, y, split, height))
+            x += split
+            width -= split
+        elif direction == 1:
+            split = height // 2
+            rectangles.append((x, y, width, split))
+            y += split
+            height -= split
+        elif direction == 2:
+            split = width // 2
+            rectangles.append((x + width - split, y, split, height))
+            width -= split
+        else:
+            split = height // 2
+            rectangles.append((x, y + height - split, width, split))
+            height -= split
+    if count > 0:
+        rectangles.append((x, y, width, height))
+    return rectangles
+
+
 def place_window(window: Any, area: Any | None, maximize: bool) -> None:
     # Moving comes before maximizing because the window manager maximizes onto
     # whichever monitor the window currently sits on: doing it the other way
@@ -307,6 +366,7 @@ class WindowInfo:
     title: str
     active: bool
     icon: Any | None = None
+    app_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -480,6 +540,10 @@ button.window-button.active-window {
   border-color: #63b68e;
 }
 
+button.window-button.open-window {
+  border-color: #63b68e;
+}
+
 button.launcher-button.active-launcher {
   background: #314238;
   border-color: #63b68e;
@@ -624,7 +688,7 @@ class AiBarWindow(Gtk.Window):
         self.wnck_screen: Any = None
         self.window_flow: Gtk.FlowBox | None = None
         self.window_children: list[Gtk.FlowBoxChild] = []
-        self.window_list_signature: tuple[tuple[int, str, bool], ...] = ()
+        self.window_list_signature: tuple[tuple[int, str, str, bool], ...] = ()
         self.window_list_poll_id: int | None = None
         self.own_xid: int | None = None
         self.super_toggle: X11SuperToggle | None = None
@@ -686,7 +750,17 @@ class AiBarWindow(Gtk.Window):
         content.pack_start(self._build_tray_row(), False, False, 0)
 
         for group in self.config.get("launcher_groups", []):
-            content.pack_start(self._build_launcher_group(group), False, False, 0)
+            internal_buttons = [
+                button for button in group.get("buttons", [])
+                if button.get("target") is not None
+            ]
+            if internal_buttons:
+                content.pack_start(
+                    self._build_launcher_group({**group, "buttons": internal_buttons}),
+                    False,
+                    False,
+                    0,
+                )
 
         self.terminal_notebook = Gtk.Notebook()
         self.terminal_notebook.get_style_context().add_class("terminal-wrap")
@@ -774,6 +848,10 @@ class AiBarWindow(Gtk.Window):
         if self.config.get("tray", {}).get("xembed", True):
             self.tray_host = XEmbedTrayHost(tray_flow, icon_size)
 
+        tray_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tray_row.pack_start(tray_flow, True, True, 0)
+        tray_row.pack_end(self._build_spiral_tile_button(), False, False, 0)
+
         self.window_flow = Gtk.FlowBox()
         self.window_flow.get_style_context().add_class("window-flow")
         self.window_flow.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -781,6 +859,8 @@ class AiBarWindow(Gtk.Window):
         self.window_flow.set_max_children_per_line(20)
         self.window_flow.set_column_spacing(6)
         self.window_flow.set_row_spacing(6)
+        self.window_children = []
+        self._rebuild_window_buttons([])
 
         refresh = int(self.config.get("tray", {}).get("status_refresh_seconds", 5))
         if self.status_labels or self.volume_controls:
@@ -788,7 +868,7 @@ class AiBarWindow(Gtk.Window):
             GLib.timeout_add_seconds(max(1, refresh), self._update_status_items)
 
         status_area.pack_start(status_flow, False, False, 0)
-        status_area.pack_start(tray_flow, False, False, 0)
+        status_area.pack_start(tray_row, False, False, 0)
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         separator.get_style_context().add_class("tray-window-separator")
         status_area.pack_start(separator, False, False, 0)
@@ -883,6 +963,17 @@ class AiBarWindow(Gtk.Window):
         button.connect("clicked", lambda _button: self._open_configuration_assistant())
         return button
 
+    def _build_spiral_tile_button(self) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("tray-icon-cell")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text("Affianca le finestre a chiocciola")
+        image = Gtk.Image.new_from_icon_name("view-grid-symbolic", Gtk.IconSize.MENU)
+        image.set_pixel_size(16)
+        button.add(image)
+        button.connect("clicked", self._tile_windows_spiral)
+        return button
+
     def _open_configuration_assistant(self) -> None:
         config_path = self.config_path or default_config_path()
         command = configuration_assistant_command(config_path)
@@ -926,6 +1017,97 @@ class AiBarWindow(Gtk.Window):
             image.set_pixel_size(WINDOW_ICON_SIZE)
         button.add(image)
         return button
+
+    def _build_pinned_launcher_button(
+        self, button_config: dict[str, Any], windows: list[WindowInfo]
+    ) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("window-button")
+        if windows:
+            button.get_style_context().add_class("open-window")
+        if any(window.active for window in windows):
+            button.get_style_context().add_class("active-window")
+        button.set_tooltip_text(str(button_config.get("label", "")))
+        button.set_relief(Gtk.ReliefStyle.NONE)
+
+        if windows:
+            target = next(
+                (window for window in reversed(windows) if window.active),
+                windows[-1],
+            )
+            button.connect(
+                "clicked", lambda _button: self._activate_window(target.xid)
+            )
+        else:
+            button.connect(
+                "clicked",
+                lambda _button: self._launch(
+                    button_config["command"],
+                    maximized=bool(button_config.get("maximized", False)),
+                ),
+            )
+
+        icon_name = button_config.get("icon")
+        if icon_name:
+            image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.MENU)
+            image.set_pixel_size(WINDOW_ICON_SIZE)
+        else:
+            window_icon = windows[-1].icon if windows else None
+            if window_icon is not None:
+                icon = window_icon.scale_simple(
+                    WINDOW_ICON_SIZE,
+                    WINDOW_ICON_SIZE,
+                    GdkPixbuf.InterpType.BILINEAR,
+                )
+                image = Gtk.Image.new_from_pixbuf(icon)
+            else:
+                image = Gtk.Image.new_from_icon_name(
+                    "application-x-executable-symbolic", Gtk.IconSize.MENU
+                )
+                image.set_pixel_size(WINDOW_ICON_SIZE)
+        button.add(image)
+        return button
+
+    def _rebuild_window_buttons(self, windows: list[WindowInfo]) -> None:
+        for child in self.window_children:
+            child.destroy()
+        self.window_children.clear()
+
+        remaining = list(windows)
+        for group in self.config.get("launcher_groups", []):
+            for button_config in group.get("buttons", []):
+                if button_config.get("target") is not None:
+                    continue
+                launcher_id = launcher_application_id(button_config)
+                matches = [
+                    window for window in remaining
+                    if application_ids_match(launcher_id, window.app_id)
+                ]
+                matched_xids = {window.xid for window in matches}
+                remaining = [
+                    window for window in remaining if window.xid not in matched_xids
+                ]
+                child = self._add_flow_child(
+                    self.window_flow,
+                    self._build_pinned_launcher_button(button_config, matches),
+                )
+                self.window_children.append(child)
+
+        window_groups: dict[str, list[WindowInfo]] = {}
+        for window in remaining:
+            key = window.app_id or f"window:{window.xid}"
+            window_groups.setdefault(key, []).append(window)
+        for group in window_groups.values():
+            representative = next(
+                (window for window in reversed(group) if window.active),
+                group[-1],
+            )
+            child = self._add_flow_child(
+                self.window_flow, self._build_window_button(representative)
+            )
+            self.window_children.append(child)
+
+        self.window_flow.show_all()
 
     def _build_launcher_group(self, group: dict[str, Any]) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
@@ -1465,32 +1647,32 @@ class AiBarWindow(Gtk.Window):
                     continue
 
                 title = clean_window_title(window.get_name() or "")
+                class_group = window.get_class_group()
+                class_id = class_group.get_id() if class_group is not None else None
+                if not class_id:
+                    class_id = window.get_class_group_name()
                 windows.append(
                     WindowInfo(
                         xid=xid,
                         title=title,
                         active=window == active_window,
                         icon=window.get_mini_icon(),
+                        app_id=application_id(class_id or ""),
                     )
                 )
         except Exception as exc:
             print(f"ai-bar: elenco finestre non aggiornato: {exc}", file=sys.stderr)
             return True
 
-        signature = tuple((window.xid, window.title, window.active) for window in windows)
+        signature = tuple(
+            (window.xid, window.title, window.app_id, window.active)
+            for window in windows
+        )
         if signature == self.window_list_signature:
             return True
 
-        for child in self.window_children:
-            child.destroy()
-        self.window_children.clear()
-
-        for window in windows:
-            child = self._add_flow_child(self.window_flow, self._build_window_button(window))
-            self.window_children.append(child)
-
+        self._rebuild_window_buttons(windows)
         self.window_list_signature = signature
-        self.window_flow.show_all()
         return True
 
     def _activate_window(self, xid: int) -> None:
@@ -1503,6 +1685,58 @@ class AiBarWindow(Gtk.Window):
             window.activate(Gtk.get_current_event_time())
         except Exception as exc:
             print(f"ai-bar: finestra non attivata {xid}: {exc}", file=sys.stderr)
+
+    def _tile_windows_spiral(self, _button: Gtk.Button | None = None) -> None:
+        if Wnck is None or self.wnck_screen is None:
+            return
+
+        try:
+            self.wnck_screen.force_update()
+            active_workspace = self.wnck_screen.get_active_workspace()
+            monitor = self._monitor_geometry()
+            windows = []
+            for window in reversed(self.wnck_screen.get_windows_stacked()):
+                xid = int(window.get_xid())
+                if (
+                    xid == self.own_xid
+                    or window.is_skip_tasklist()
+                    or window.is_minimized()
+                    or window.get_window_type() != Wnck.WindowType.NORMAL
+                ):
+                    continue
+                if (
+                    active_workspace is not None
+                    and not window.is_pinned()
+                    and not window.is_on_workspace(active_workspace)
+                ):
+                    continue
+                x, y, width, height = window.get_geometry()
+                center_x = x + width // 2
+                center_y = y + height // 2
+                if not (
+                    monitor.x <= center_x < monitor.x + monitor.width
+                    and monitor.y <= center_y < monitor.y + monitor.height
+                ):
+                    continue
+                windows.append(window)
+
+            mask = (
+                Wnck.WindowMoveResizeMask.X
+                | Wnck.WindowMoveResizeMask.Y
+                | Wnck.WindowMoveResizeMask.WIDTH
+                | Wnck.WindowMoveResizeMask.HEIGHT
+            )
+            for window, rectangle in zip(
+                windows, spiral_rectangles(self._monitor_workarea(), len(windows))
+            ):
+                window.unmaximize()
+                window.set_geometry(
+                    Wnck.WindowGravity.CURRENT,
+                    mask,
+                    *rectangle,
+                )
+        except Exception as exc:
+            print(f"ai-bar: finestre non affiancate: {exc}", file=sys.stderr)
 
     def _launch(self, command: str | list[str], maximized: bool = False) -> None:
         existing_xids: set[int] | None = None
