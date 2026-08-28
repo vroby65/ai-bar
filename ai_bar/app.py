@@ -2220,6 +2220,7 @@ class AiBarWindow(Gtk.Window):
         command = None if key == "__shell__" else key
         replacement = self._build_terminal(command, width_px=self.panel_width)
         self.terminals[key] = replacement
+        replacement.show_all()
 
         if detached_window is not None:
             detached_window.remove(page)
@@ -2233,7 +2234,6 @@ class AiBarWindow(Gtk.Window):
             notebook.set_current_page(index)
 
         page.destroy()
-        replacement.show_all()
         self.terminal = replacement
         replacement.grab_focus()
         self._refresh_launcher_states(replacement)

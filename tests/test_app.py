@@ -1591,20 +1591,23 @@ class DetachTests(unittest.TestCase):
         window = self._window()
         notebook = Gtk.Notebook()
         window.terminal_notebook = notebook
+        background = Gtk.Box()
         previous = Gtk.Box()
         replacement = Gtk.Box()
         window.terminals = {"codex": previous}
         window.panel_width = 400
         window._build_terminal = Mock(return_value=replacement)
+        notebook.append_page(background, Gtk.Label(label="Menu"))
         notebook.append_page(previous, Gtk.Label(label="Codex"))
         notebook.show_all()
-        notebook.set_current_page(0)
+        notebook.set_current_page(1)
 
         window._reload_current_page()
 
         window._build_terminal.assert_called_once_with("codex", width_px=400)
         self.assertIs(window.terminals["codex"], replacement)
-        self.assertIs(notebook.get_nth_page(0), replacement)
+        self.assertIs(notebook.get_nth_page(1), replacement)
+        self.assertIs(notebook.get_nth_page(notebook.get_current_page()), replacement)
         self.assertEqual(notebook.get_tab_label_text(replacement), "Codex")
 
     def test_reload_button_reloads_the_current_web_app(self):
