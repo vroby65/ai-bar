@@ -71,6 +71,7 @@ class XAppStatusIconButton(Gtk.Button):
                 self.proxy.connect("notify::visible", self._on_visible_changed),
             ]
         )
+        self.connect("clicked", self._on_primary_clicked)
         self.connect("button-press-event", self._on_button_press)
         self.connect("button-release-event", self._on_button_release)
         self.connect("scroll-event", self._on_scroll)
@@ -145,6 +146,9 @@ class XAppStatusIconButton(Gtk.Button):
         )
 
     def _on_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button == Gdk.BUTTON_PRIMARY:
+            return Gdk.EVENT_PROPAGATE
+
         x, y, position = self._menu_anchor()
         self.proxy.call_button_press(
             x, y, event.button, event.time, position, None, None
@@ -152,11 +156,24 @@ class XAppStatusIconButton(Gtk.Button):
         return Gdk.EVENT_STOP
 
     def _on_button_release(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button == Gdk.BUTTON_PRIMARY:
+            return Gdk.EVENT_PROPAGATE
+
         x, y, position = self._menu_anchor()
         self.proxy.call_button_release(
             x, y, event.button, event.time, position, None, None
         )
         return Gdk.EVENT_STOP
+
+    def _on_primary_clicked(self, _button: Gtk.Button) -> None:
+        x, y, position = self._menu_anchor()
+        event_time = Gtk.get_current_event_time()
+        self.proxy.call_button_press(
+            x, y, Gdk.BUTTON_PRIMARY, event_time, position, None, None
+        )
+        self.proxy.call_button_release(
+            x, y, Gdk.BUTTON_PRIMARY, event_time, position, None, None
+        )
 
     def _on_scroll(self, _widget: Gtk.Widget, event: Gdk.EventScroll) -> bool:
         has_direction, direction = event.get_scroll_direction()
@@ -172,7 +189,7 @@ class XAppStatusIconButton(Gtk.Button):
 
 class XAppStatusIconHost:
     def __init__(
-        self, container: Gtk.FlowBox, icon_size: int = 24, panel_side: str = "left"
+        self, container: Gtk.FlowBox, icon_size: int = 16, panel_side: str = "left"
     ) -> None:
         self.container = container
         self.icon_size = icon_size

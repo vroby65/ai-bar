@@ -45,8 +45,13 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `panel.monitor`: which monitor holds the panel, by index or connector name such as `DP-1`; unset uses the primary one
 - `panel.launch_monitor`: where windows started from the panel should appear, by index or connector name, or `auto` for the primary monitor; unset leaves placement to the window manager
 - `tray.items`: side items such as volume, Telegram, or custom commands
+- `tray.icon_size`: size of XApp and XEmbed tray icons, default `16`
 - `tray.items[].icon_only`: `true` shows only the icon for that item, without the text label
-- `launcher_groups`: groups of buttons, icons, and commands
+- `launcher_groups`: groups of buttons, icons, and commands; external launchers
+  stay pinned in the window dock and focus the application instead of creating a
+  duplicate button when it is already open; a green border marks launchers with
+  an open window, while the filled green state marks the active one; multiple
+  windows from an unpinned application share one button too
 - `launcher_groups[].buttons[].target`: where the button opens its content — all inside the panel:
   - `terminal` (default): runs the command in an embedded terminal tab
   - `window`: launches a GUI program and embeds its window in a tab of the terminal area (best effort, see below)
@@ -54,11 +59,14 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `launcher_groups[].buttons[].url`: the URL for `target: "url"` buttons
 - `launcher_groups[].buttons[].maximized`: opens the external window maximized
 - `quick_launchers`: ordered mini launch buttons shown next to the current-tool reload button; set it to `[]` to hide the area
+- `quick_launchers[].integrated`: `true` embeds the GUI application in the panel; `false` (the default) opens it in its own window
 - `terminal.command`: shell or command to open in the embedded terminal
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
+
+The small grid button at the far right of the tray tiles the normal, non-minimized windows on the panel monitor in a spiral layout.
 
 The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. Tabs are hidden, so the button that opened the page on screen stays highlighted, the same way the window list marks the active window. `window` and `url` buttons work the same way: the app or web app is embedded in its own tab and keeps running while you switch to another tab. Web apps keep cookies and site data across restarts, and while a web tab is active you can use `Ctrl++` or `Ctrl+=` to zoom in and `Ctrl+-` to zoom out. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
 

@@ -14,7 +14,7 @@
   },
   "tray": {
     "xembed": true,
-    "icon_size": 24,
+    "icon_size": 16,
     "status_refresh_seconds": 5,
     "items": [
       {
@@ -129,22 +129,26 @@
     {
       "label": "AnyDesk",
       "icon": "anydesk",
-      "command": ["anydesk"]
+      "command": ["anydesk"],
+      "integrated": false
     },
     {
       "label": "TeamViewer",
       "icon": "teamviewer",
-      "command": ["teamviewer"]
+      "command": ["teamviewer"],
+      "integrated": false
     },
     {
       "label": "RustDesk",
       "icon": "rustdesk",
-      "command": ["rustdesk"]
+      "command": ["rustdesk"],
+      "integrated": false
     },
     {
       "label": "LocalSend",
       "icon": "localsend_app",
-      "command": ["localsend_app"]
+      "command": ["localsend_app"],
+      "integrated": false
     }
   ],
   "webview": {

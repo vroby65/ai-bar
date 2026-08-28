@@ -17,9 +17,11 @@ from gi.repository import Gdk, GdkPixbuf, Gtk, Vte
 
 from ai_bar.app import (
     AiBarWindow,
+    CSS,
     WindowInfo,
     X,
     X11SuperToggle,
+    application_ids_match,
     clean_window_title,
     clock_labels_fit_inline,
     configuration_assistant_command,
@@ -36,6 +38,7 @@ from ai_bar.app import (
     same_origin,
     set_system_muted,
     set_system_volume,
+    spiral_rectangles,
     terminal_argv,
     terminal_session_key,
     volume_icon_name,
@@ -48,10 +51,28 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 
 
 class ClockLayoutTests(unittest.TestCase):
+    def test_app_tray_icons_have_no_background_or_border(self):
+        tray_css = CSS.split(".tray-icon-cell {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("background: transparent;", tray_css)
+        self.assertIn("border: 0;", tray_css)
+
+    def test_tray_window_separator_is_light_gray(self):
+        separator_css = CSS.split(".tray-window-separator {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("background-color: #c0c0c0;", separator_css)
+
+    def test_open_window_has_a_distinct_border(self):
+        open_window_css = CSS.split("button.window-button.open-window {", 1)[1].split(
+            "}", 1
+        )[0]
+
+        self.assertIn("border-color: #63b68e;", open_window_css)
+
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_tray_row_places_assistant_before_volume_and_keeps_windows_compact(
+    def test_tray_row_places_assistant_before_volume_and_separates_windows(
         self,
         _xapp_host,
         _xembed_host,
@@ -72,6 +93,7 @@ class ClockLayoutTests(unittest.TestCase):
         window.tray_host = None
         window.xapp_tray_host = None
         window._open_configuration_assistant = Mock()
+        window._tile_windows_spiral = Mock()
 
         status_area = window._build_tray_row()
 
@@ -79,14 +101,105 @@ class ClockLayoutTests(unittest.TestCase):
         assistant_button, volume_control = [
             child.get_child() for child in status_flow.get_children()
         ]
+        tray_row = status_area.get_children()[1]
+        tray_flow, spiral_button = tray_row.get_children()
         self.assertIsInstance(assistant_button, Gtk.Button)
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertNotIn(assistant_button, volume_control.get_children())
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
+        self.assertEqual(
+            spiral_button.get_tooltip_text(), "Affianca le finestre a chiocciola"
+        )
+        self.assertIsInstance(tray_flow, Gtk.FlowBox)
+        self.assertEqual(
+            tray_row.query_child_packing(spiral_button)[3], Gtk.PackType.END
+        )
         self.assertEqual(window.window_flow.get_max_children_per_line(), 20)
+        separator = status_area.get_children()[2]
+        self.assertIsInstance(separator, Gtk.Separator)
+        self.assertEqual(separator.get_orientation(), Gtk.Orientation.HORIZONTAL)
+        self.assertTrue(
+            separator.get_style_context().has_class("tray-window-separator")
+        )
+        self.assertIs(status_area.get_children()[3], window.window_flow)
         assistant_button.emit("clicked")
         window._open_configuration_assistant.assert_called_once_with()
+        spiral_button.emit("clicked")
+        window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
+
+    def test_spiral_rectangles_turn_around_the_remaining_space(self):
+        area = SimpleNamespace(x=400, y=0, width=800, height=600)
+
+        self.assertEqual(
+            spiral_rectangles(area, 4),
+            [
+                (400, 0, 400, 600),
+                (800, 0, 400, 300),
+                (1000, 300, 200, 300),
+                (800, 300, 200, 300),
+            ],
+        )
+
+    def test_spiral_tiling_moves_only_normal_windows_on_the_panel_monitor(self):
+        class Window:
+            def __init__(self, xid, geometry, *, minimized=False):
+                self.xid = xid
+                self.geometry = geometry
+                self.minimized = minimized
+                self.unmaximize = Mock()
+                self.set_geometry = Mock()
+
+            def get_xid(self):
+                return self.xid
+
+            def get_window_type(self):
+                return "normal"
+
+            def is_skip_tasklist(self):
+                return False
+
+            def is_minimized(self):
+                return self.minimized
+
+            def is_pinned(self):
+                return False
+
+            def is_on_workspace(self, _workspace):
+                return True
+
+            def get_geometry(self):
+                return self.geometry
+
+        left = Window(10, (500, 100, 400, 400))
+        topmost = Window(20, (900, 100, 400, 400))
+        minimized = Window(30, (600, 100, 400, 400), minimized=True)
+        other_monitor = Window(40, (2100, 100, 400, 400))
+        screen = Mock()
+        screen.get_active_workspace.return_value = object()
+        screen.get_windows_stacked.return_value = [left, topmost, minimized, other_monitor]
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.wnck_screen = screen
+        window.own_xid = 99
+        window._monitor_geometry = lambda: SimpleNamespace(
+            x=0, y=0, width=1920, height=1080
+        )
+        window._monitor_workarea = lambda: SimpleNamespace(
+            x=400, y=0, width=1520, height=1080
+        )
+        wnck = SimpleNamespace(
+            WindowType=SimpleNamespace(NORMAL="normal"),
+            WindowGravity=SimpleNamespace(CURRENT=0),
+            WindowMoveResizeMask=SimpleNamespace(X=1, Y=2, WIDTH=4, HEIGHT=8),
+        )
+
+        with patch("ai_bar.app.Wnck", wnck):
+            window._tile_windows_spiral()
+
+        topmost.set_geometry.assert_called_once_with(0, 15, 400, 0, 760, 1080)
+        left.set_geometry.assert_called_once_with(0, 15, 1160, 0, 760, 1080)
+        minimized.set_geometry.assert_not_called()
+        other_monitor.set_geometry.assert_not_called()
 
     def test_configuration_assistant_command_uses_active_config(self):
         self.assertEqual(
@@ -151,6 +264,8 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIsInstance(image, Gtk.Image)
         self.assertEqual(image.get_storage_type(), Gtk.ImageType.PIXBUF)
         self.assertIsNotNone(image.get_pixbuf())
+        self.assertEqual(image.get_pixbuf().get_width(), 20)
+        self.assertEqual(image.get_pixbuf().get_height(), 20)
         self.assertEqual(button.get_tooltip_text(), "Firefox")
         button.destroy()
 
@@ -162,7 +277,74 @@ class ClockLayoutTests(unittest.TestCase):
         image = button.get_child()
         self.assertIsInstance(image, Gtk.Image)
         self.assertEqual(image.get_icon_name()[0], "window-symbolic")
+        self.assertEqual(image.get_pixel_size(), 20)
         button.destroy()
+
+    def test_pinned_launchers_and_windows_share_one_grouped_dock(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {
+            "launcher_groups": [
+                {
+                    "buttons": [
+                        {
+                            "label": "Firefox",
+                            "icon": "firefox",
+                            "command": ["firefox"],
+                        },
+                        {
+                            "label": "Terminale",
+                            "icon": "utilities-terminal-symbolic",
+                            "command": ["gnome-terminal"],
+                        },
+                        {
+                            "label": "Codex",
+                            "command": ["codex"],
+                            "target": "terminal",
+                        },
+                    ]
+                }
+            ]
+        }
+        window.window_flow = Gtk.FlowBox()
+        window.window_children = []
+        window._activate_window = Mock()
+        window._launch = Mock()
+
+        window._rebuild_window_buttons(
+            [
+                WindowInfo(10, "Firefox - prima", False, None, "firefox"),
+                WindowInfo(11, "Firefox - seconda", True, None, "firefox"),
+                WindowInfo(20, "Telegram", False, None, "telegramdesktop"),
+                WindowInfo(21, "Telegram chat", False, None, "telegramdesktop"),
+            ]
+        )
+
+        buttons = [child.get_child() for child in window.window_flow.get_children()]
+        self.assertEqual(
+            [button.get_tooltip_text() for button in buttons],
+            ["Firefox", "Terminale", "Telegram chat"],
+        )
+        self.assertTrue(buttons[0].get_style_context().has_class("open-window"))
+        self.assertFalse(buttons[1].get_style_context().has_class("open-window"))
+        self.assertTrue(buttons[0].get_style_context().has_class("active-window"))
+
+        buttons[0].emit("clicked")
+        buttons[1].emit("clicked")
+        buttons[2].emit("clicked")
+
+        self.assertEqual(
+            window._activate_window.call_args_list,
+            [unittest.mock.call(11), unittest.mock.call(21)],
+        )
+        window._launch.assert_called_once_with(["gnome-terminal"], maximized=False)
+        window.window_flow.destroy()
+
+    def test_terminal_launcher_matches_its_server_window(self):
+        self.assertTrue(
+            application_ids_match("gnome-terminal", "gnome-terminal-server")
+        )
+        self.assertTrue(application_ids_match("nautilus", "org-gnome-nautilus"))
+        self.assertFalse(application_ids_match("code", "codex"))
 
     def test_maximized_launcher_requests_a_maximized_window(self):
         window = AiBarWindow.__new__(AiBarWindow)
@@ -321,9 +503,81 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(flow.get_max_children_per_line(), 3)
         self.assertEqual(len(flow.get_children()), 3)
         for child in flow.get_children():
-            self.assertTrue(child.get_child().get_hexpand())
+            button = child.get_child()
+            self.assertTrue(button.get_hexpand())
+            self.assertTrue(button.get_style_context().has_class("icon-only-launcher"))
+            self.assertFalse(
+                any(isinstance(widget, Gtk.Label) for widget in button.get_child().get_children())
+            )
 
         group.destroy()
+
+    def test_titled_launcher_group_keeps_button_labels(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.launcher_buttons = {}
+
+        group = window._build_launcher_group(
+            {
+                "title": "Tools",
+                "buttons": [
+                    {
+                        "label": "Codex",
+                        "icon": "utilities-terminal-symbolic",
+                        "command": ["codex"],
+                        "target": "terminal",
+                    },
+                ],
+            }
+        )
+
+        flow = group.get_children()[1]
+        button = flow.get_children()[0].get_child()
+        self.assertFalse(button.get_style_context().has_class("icon-only-launcher"))
+        self.assertTrue(
+            any(isinstance(widget, Gtk.Label) for widget in button.get_child().get_children())
+        )
+
+        group.destroy()
+
+    def test_external_launchers_are_not_repeated_below_the_window_dock(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        tool = {
+            "label": "Codex",
+            "command": ["codex"],
+            "target": "terminal",
+        }
+        window.config = {
+            "panel": {"side": "left", "resizable": False},
+            "launcher_groups": [
+                {
+                    "title": "Apps",
+                    "buttons": [
+                        {"label": "Firefox", "command": ["firefox"]},
+                        tool,
+                    ],
+                }
+            ],
+            "terminal": {},
+        }
+        window.terminals = {}
+        window.embedded = {}
+        window.launcher_buttons = {}
+        window.detached = {}
+        window.detach_button = None
+        window.reload_button = None
+        window._build_clock = lambda: Gtk.Label()
+        window._build_tray_row = lambda: Gtk.Label()
+        window._build_launcher_group = Mock(return_value=Gtk.Label())
+        window._build_terminal = lambda _command: Gtk.Label()
+        window._build_detach_bar = lambda: Gtk.Label()
+        window._build_session_buttons = lambda: Gtk.Label()
+
+        root = window._build_content()
+
+        window._build_launcher_group.assert_called_once_with(
+            {"title": "Apps", "buttons": [tool]}
+        )
+        root.destroy()
 
     def test_webkit_cookie_storage_path_uses_xdg_data_home(self):
         with patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/xdg-data"}):
@@ -513,7 +767,8 @@ class ClockLayoutTests(unittest.TestCase):
         window.xapp_tray_host = None
 
         status_area = window._build_tray_row()
-        status_flow, tray_flow, _window_flow = status_area.get_children()
+        status_flow, tray_row, _separator, _window_flow = status_area.get_children()
+        tray_flow = tray_row.get_children()[0]
 
         self.assertEqual(status_flow.get_direction(), Gtk.TextDirection.LTR)
         self.assertEqual(tray_flow.get_direction(), Gtk.TextDirection.LTR)
@@ -1232,9 +1487,11 @@ class DetachTests(unittest.TestCase):
                 "label": "LocalSend",
                 "icon": "localsend_app",
                 "command": ["localsend_app"],
+                "integrated": True,
             },
         ]
         window._launch = Mock()
+        window._switch_embedded_window = Mock()
 
         bar = window._build_detach_bar()
         buttons = {
@@ -1256,7 +1513,11 @@ class DetachTests(unittest.TestCase):
         self.assertEqual(set(icon_sizes.values()), {detach_icon_size})
         self.assertEqual(
             window._launch.call_args_list,
-            [unittest.mock.call(["anydesk"]), unittest.mock.call(["localsend_app"])],
+            [unittest.mock.call(["anydesk"])],
+        )
+        window._switch_embedded_window.assert_called_once_with(
+            ["localsend_app"],
+            "LocalSend",
         )
         self.assertEqual(
             buttons["AnyDesk"].get_child().get_icon_name()[0],
@@ -1330,20 +1591,23 @@ class DetachTests(unittest.TestCase):
         window = self._window()
         notebook = Gtk.Notebook()
         window.terminal_notebook = notebook
+        background = Gtk.Box()
         previous = Gtk.Box()
         replacement = Gtk.Box()
         window.terminals = {"codex": previous}
         window.panel_width = 400
         window._build_terminal = Mock(return_value=replacement)
+        notebook.append_page(background, Gtk.Label(label="Menu"))
         notebook.append_page(previous, Gtk.Label(label="Codex"))
         notebook.show_all()
-        notebook.set_current_page(0)
+        notebook.set_current_page(1)
 
         window._reload_current_page()
 
         window._build_terminal.assert_called_once_with("codex", width_px=400)
         self.assertIs(window.terminals["codex"], replacement)
-        self.assertIs(notebook.get_nth_page(0), replacement)
+        self.assertIs(notebook.get_nth_page(1), replacement)
+        self.assertIs(notebook.get_nth_page(notebook.get_current_page()), replacement)
         self.assertEqual(notebook.get_tab_label_text(replacement), "Codex")
 
     def test_reload_button_reloads_the_current_web_app(self):
