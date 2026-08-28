@@ -16,6 +16,8 @@ APT_PACKAGES=(
     gir1.2-xapp-1.0
     gir1.2-webkit2-4.1
     gir1.2-secret-1
+    gnome-keyring
+    libpam-gnome-keyring
     python3-xlib
     openbox
     policykit-1-gnome
@@ -52,6 +54,10 @@ if [ "${#missing_packages[@]}" -gt 0 ]; then
     sudo apt-get update
     sudo apt-get install -y "${missing_packages[@]}"
 fi
+
+echo "Abilitazione del keyring per LightDM..."
+systemctl --user unmask gnome-keyring-daemon.service gnome-keyring-daemon.socket
+systemctl --user enable gnome-keyring-daemon.socket
 
 echo "Installazione del comando ai-bar..."
 pipx install --editable --force --system-site-packages --python /usr/bin/python3 "$PROJECT_DIR"

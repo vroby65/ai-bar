@@ -11,6 +11,7 @@ A GTK side panel similar to a desktop bar, with the date and time at the top, a 
 Run the script as a regular user, without `sudo`: it requests elevated privileges only to install the system packages and session. The installer:
 
 - installs the dependencies on Debian, Ubuntu, or Linux Mint
+- enables GNOME Keyring so LightDM can unlock it with the login password
 - installs the `ai-bar` command with `pipx` in editable mode and links `ai-bar`
   and `ai-bar-openbox-session` into `/usr/local/bin`
 - creates `~/.config/ai-bar/config.json` if it does not exist
@@ -86,7 +87,7 @@ The embedded tray supports XApp icons and, in X11 sessions, XEmbed icons. Applet
 
 ## LightDM/Openbox session
 
-The session is installed by `install.sh`. Log out of the graphical session, select `AI Bar Openbox` in the LightDM session chooser, and log in. The launcher finds the command installed by `pipx`, loads the application code from the repository checkout, and uses `~/.config/ai-bar/config.json`. Keep the checkout in the same path while testing. Window decorations use the bundled `Aura Midnight` Openbox theme, copied to `~/.themes` by the installer; an existing `~/.config/openbox/rc.xml` is left untouched.
+The session is installed by `install.sh`. Log out of the graphical session, select `AI Bar Openbox` in the LightDM session chooser, and log in. The installer enables the GNOME Keyring user socket so the login keyring can be unlocked by LightDM; after installing, log out and back in for this to take effect. The launcher finds the command installed by `pipx`, loads the application code from the repository checkout, and uses `~/.config/ai-bar/config.json`. Keep the checkout in the same path while testing. Window decorations use the bundled `Aura Midnight` Openbox theme, copied to `~/.themes` by the installer; an existing `~/.config/openbox/rc.xml` is left untouched.
 
 ## Verification
 

@@ -35,6 +35,21 @@ class PackagingTests(unittest.TestCase):
             installer,
         )
 
+    def test_installer_enables_gnome_keyring_for_lightdm(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("    gnome-keyring\n", installer)
+        self.assertIn("    libpam-gnome-keyring\n", installer)
+        self.assertIn(
+            "systemctl --user unmask gnome-keyring-daemon.service "
+            "gnome-keyring-daemon.socket",
+            installer,
+        )
+        self.assertIn(
+            "systemctl --user enable gnome-keyring-daemon.socket",
+            installer,
+        )
+
     def test_installer_and_session_launcher_have_valid_shell_syntax(self):
         for path in (ROOT / "install.sh", ROOT / "scripts" / "ai-bar-openbox-session"):
             subprocess.run(["bash", "-n", path], check=True)
