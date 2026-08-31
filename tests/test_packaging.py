@@ -34,6 +34,16 @@ class PackagingTests(unittest.TestCase):
             "/usr/local/bin/ai-bar-openbox-session",
             installer,
         )
+        self.assertIn(
+            'ln -sfn -- "$PROJECT_DIR/scripts/ai-bar-askpass" '
+            "/usr/local/bin/ai-bar-askpass",
+            installer,
+        )
+
+    def test_installer_provides_the_graphical_askpass_dependency(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("    yad\n", installer)
 
     def test_installer_enables_gnome_keyring_for_lightdm(self):
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
@@ -51,7 +61,11 @@ class PackagingTests(unittest.TestCase):
         )
 
     def test_installer_and_session_launcher_have_valid_shell_syntax(self):
-        for path in (ROOT / "install.sh", ROOT / "scripts" / "ai-bar-openbox-session"):
+        for path in (
+            ROOT / "install.sh",
+            ROOT / "scripts" / "ai-bar-openbox-session",
+            ROOT / "scripts" / "ai-bar-askpass",
+        ):
             subprocess.run(["bash", "-n", path], check=True)
 
     def test_session_launcher_uses_installed_command(self):

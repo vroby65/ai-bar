@@ -78,6 +78,7 @@ FAVICON_SIZE = 24
 PAGE_ACTION_ICON_SIZE = 16
 FAVICON_TIMEOUT_SECONDS = 5
 FAVICON_MAX_BYTES = 1 << 20
+ASKPASS_PATH = "/usr/local/bin/ai-bar-askpass"
 TERMINAL_FOREGROUND = "#f2f2ee"
 TERMINAL_BACKGROUND = "#151819"
 TERMINAL_PALETTE = (
@@ -287,8 +288,9 @@ def centered_position(area: Any, width: int, height: int) -> tuple[int, int]:
 def spiral_rectangles(area: Any, count: int) -> list[tuple[int, int, int, int]]:
     rectangles = []
     x, y, width, height = area.x, area.y, area.width, area.height
+    start_direction = 1 if width < height else 0
     for index in range(max(0, count - 1)):
-        direction = index % 4
+        direction = (start_direction + index) % 4
         if direction == 0:
             split = width // 2
             rectangles.append((x, y, split, height))
@@ -608,7 +610,7 @@ scale.volume-slider {
 }
 
 button.launcher-button {
-  min-height: 60px;
+  min-height: 48px;
 }
 
 button.launcher-button.icon-only-launcher {
@@ -907,6 +909,11 @@ class AiBarWindow(Gtk.Window):
         button.add(inner)
 
         command = item.get("command")
+        if item.get("type") == "screenshot" and command == [
+            "/usr/bin/mate-screenshot",
+            "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png",
+        ]:
+            command = ["/usr/bin/mate-screenshot", "--interactive"]
         if command:
             button.connect("clicked", lambda _button: self._launch(command))
 
@@ -1686,6 +1693,23 @@ class AiBarWindow(Gtk.Window):
         except Exception as exc:
             print(f"ai-bar: finestra non attivata {xid}: {exc}", file=sys.stderr)
 
+    def _focused_monitor(self, window: Any | None) -> Any | None:
+        if window is None:
+            return None
+        try:
+            if self.own_xid is not None and int(window.get_xid()) == self.own_xid:
+                return None
+            x, y, width, height = window.get_geometry()
+            display = Gdk.Display.get_default()
+            if display is None:
+                return None
+            return display.get_monitor_at_point(
+                x + width // 2,
+                y + height // 2,
+            )
+        except Exception:
+            return None
+
     def _tile_windows_spiral(self, _button: Gtk.Button | None = None) -> None:
         if Wnck is None or self.wnck_screen is None:
             return
@@ -1693,7 +1717,16 @@ class AiBarWindow(Gtk.Window):
         try:
             self.wnck_screen.force_update()
             active_workspace = self.wnck_screen.get_active_workspace()
+            active_window = self.wnck_screen.get_active_window()
             monitor = self._monitor_geometry()
+            workarea = self._monitor_workarea()
+            focused_monitor = self._focused_monitor(active_window)
+            if focused_monitor is not None:
+                monitor = focused_monitor.get_geometry()
+                try:
+                    workarea = focused_monitor.get_workarea()
+                except Exception:
+                    workarea = monitor
             windows = []
             for window in reversed(self.wnck_screen.get_windows_stacked()):
                 xid = int(window.get_xid())
@@ -1727,7 +1760,7 @@ class AiBarWindow(Gtk.Window):
                 | Wnck.WindowMoveResizeMask.HEIGHT
             )
             for window, rectangle in zip(
-                windows, spiral_rectangles(self._monitor_workarea(), len(windows))
+                windows, spiral_rectangles(workarea, len(windows))
             ):
                 window.unmaximize()
                 window.set_geometry(
@@ -2724,6 +2757,13 @@ def terminal_argv(command: str | list[str] | None, width_px: int | None = None) 
     return argv
 
 
+def configure_askpass_environment() -> None:
+    if "SUDO_ASKPASS" in os.environ:
+        return
+    if os.access(ASKPASS_PATH, os.X_OK):
+        os.environ["SUDO_ASKPASS"] = ASKPASS_PATH
+
+
 def launcher_page_key(button_config: dict[str, Any]) -> str | None:
     # La stessa chiave con cui la scheda viene registrata: e' cosi' che si
     # risale dal contenuto mostrato al bottone che lo ha aperto.
@@ -2901,6 +2941,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_default_config:
         print(json.dumps(default_config(), indent=2))
         return 0
+
+    configure_askpass_environment()
 
     try:
         config = load_config(args.config)

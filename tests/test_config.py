@@ -66,6 +66,10 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual(config["tray"]["items"][0]["command"], ["pavucontrol", "-t", "2"])
         self.assertEqual(
+            config["tray"]["items"][2]["command"],
+            ["/usr/bin/mate-screenshot", "--interactive"],
+        )
+        self.assertEqual(
             [button["label"] for button in config["session_buttons"]],
             ["Reload", "Logout", "Reboot", "Powerdown"],
         )

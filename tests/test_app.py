@@ -69,6 +69,11 @@ class ClockLayoutTests(unittest.TestCase):
 
         self.assertIn("border-color: #63b68e;", open_window_css)
 
+    def test_tool_buttons_are_compact(self):
+        launcher_css = CSS.split("button.launcher-button {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("min-height: 48px;", launcher_css)
+
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
@@ -128,6 +133,43 @@ class ClockLayoutTests(unittest.TestCase):
         window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
 
+    def test_legacy_screenshot_button_opens_the_interactive_menu(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch = Mock()
+        button = window._build_status_button(
+            {
+                "type": "screenshot",
+                "label": "Screenshot",
+                "command": [
+                    "/usr/bin/mate-screenshot",
+                    "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png",
+                ],
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch.assert_called_once_with(
+            ["/usr/bin/mate-screenshot", "--interactive"]
+        )
+        button.destroy()
+
+    def test_screenshot_button_preserves_a_custom_command(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch = Mock()
+        button = window._build_status_button(
+            {
+                "type": "screenshot",
+                "label": "Screenshot",
+                "command": ["flameshot", "gui"],
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch.assert_called_once_with(["flameshot", "gui"])
+        button.destroy()
+
     def test_spiral_rectangles_turn_around_the_remaining_space(self):
         area = SimpleNamespace(x=400, y=0, width=800, height=600)
 
@@ -138,6 +180,19 @@ class ClockLayoutTests(unittest.TestCase):
                 (800, 0, 400, 300),
                 (1000, 300, 200, 300),
                 (800, 300, 200, 300),
+            ],
+        )
+
+    def test_spiral_rectangles_start_top_to_bottom_in_portrait_area(self):
+        area = SimpleNamespace(x=400, y=0, width=600, height=800)
+
+        self.assertEqual(
+            spiral_rectangles(area, 4),
+            [
+                (400, 0, 600, 400),
+                (700, 400, 300, 400),
+                (400, 600, 300, 200),
+                (400, 400, 300, 200),
             ],
         )
 
@@ -177,6 +232,7 @@ class ClockLayoutTests(unittest.TestCase):
         other_monitor = Window(40, (2100, 100, 400, 400))
         screen = Mock()
         screen.get_active_workspace.return_value = object()
+        screen.get_active_window.return_value = None
         screen.get_windows_stacked.return_value = [left, topmost, minimized, other_monitor]
         window = AiBarWindow.__new__(AiBarWindow)
         window.wnck_screen = screen
@@ -200,6 +256,72 @@ class ClockLayoutTests(unittest.TestCase):
         left.set_geometry.assert_called_once_with(0, 15, 1160, 0, 760, 1080)
         minimized.set_geometry.assert_not_called()
         other_monitor.set_geometry.assert_not_called()
+
+    def test_spiral_tiling_uses_the_focused_window_monitor(self):
+        class Window:
+            def __init__(self, xid, geometry):
+                self.xid = xid
+                self.geometry = geometry
+                self.unmaximize = Mock()
+                self.set_geometry = Mock()
+
+            def get_xid(self):
+                return self.xid
+
+            def get_window_type(self):
+                return "normal"
+
+            def is_skip_tasklist(self):
+                return False
+
+            def is_minimized(self):
+                return False
+
+            def is_pinned(self):
+                return False
+
+            def is_on_workspace(self, _workspace):
+                return True
+
+            def get_geometry(self):
+                return self.geometry
+
+        left = Window(10, (500, 100, 400, 400))
+        focused = Window(20, (2200, 100, 400, 400))
+        right = Window(30, (2600, 100, 400, 400))
+        screen = Mock()
+        screen.get_active_workspace.return_value = object()
+        screen.get_active_window.return_value = focused
+        screen.get_windows_stacked.return_value = [left, focused, right]
+        right_monitor = SimpleNamespace(
+            get_geometry=lambda: SimpleNamespace(x=1920, y=0, width=1080, height=1080),
+            get_workarea=lambda: SimpleNamespace(x=1920, y=0, width=1080, height=1080)
+        )
+        display = SimpleNamespace(get_monitor_at_point=Mock(return_value=right_monitor))
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.wnck_screen = screen
+        window.own_xid = 99
+        window._monitor_geometry = lambda: SimpleNamespace(
+            x=0, y=0, width=1920, height=1080
+        )
+        window._monitor_workarea = lambda: SimpleNamespace(
+            x=0, y=0, width=1920, height=1080
+        )
+        wnck = SimpleNamespace(
+            WindowType=SimpleNamespace(NORMAL="normal"),
+            WindowGravity=SimpleNamespace(CURRENT=0),
+            WindowMoveResizeMask=SimpleNamespace(X=1, Y=2, WIDTH=4, HEIGHT=8),
+        )
+
+        with patch("ai_bar.app.Wnck", wnck), patch(
+            "ai_bar.app.Gdk.Display.get_default", return_value=display
+        ):
+            window._tile_windows_spiral()
+
+        display.get_monitor_at_point.assert_called_once_with(2400, 300)
+        right.set_geometry.assert_called_once_with(0, 15, 1920, 0, 540, 1080)
+        focused.set_geometry.assert_called_once_with(0, 15, 2460, 0, 540, 1080)
+        left.set_geometry.assert_not_called()
 
     def test_configuration_assistant_command_uses_active_config(self):
         self.assertEqual(

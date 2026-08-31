@@ -25,6 +25,7 @@ APT_PACKAGES=(
     pulseaudio-utils
     pavucontrol
     network-manager
+    yad
 )
 
 if [ "$EUID" -eq 0 ]; then
@@ -95,6 +96,7 @@ fi
 echo "Installazione dei collegamenti dei comandi..."
 sudo ln -sfn -- "$AI_BAR_BIN" /usr/local/bin/ai-bar
 sudo ln -sfn -- "$PROJECT_DIR/scripts/ai-bar-openbox-session" /usr/local/bin/ai-bar-openbox-session
+sudo ln -sfn -- "$PROJECT_DIR/scripts/ai-bar-askpass" /usr/local/bin/ai-bar-askpass
 
 echo "Installazione della sessione AI Bar Openbox..."
 sudo install -Dm644 \

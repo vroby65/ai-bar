@@ -34,7 +34,7 @@
         "type": "screenshot",
         "label": "Screenshot",
         "icon": "camera-photo-symbolic",
-        "command": ["/usr/bin/mate-screenshot", "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png"],
+        "command": ["/usr/bin/mate-screenshot", "--interactive"],
         "icon_only": true
       }
     ]

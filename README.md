@@ -12,8 +12,8 @@ Run the script as a regular user, without `sudo`: it requests elevated privilege
 
 - installs the dependencies on Debian, Ubuntu, or Linux Mint
 - enables GNOME Keyring so LightDM can unlock it with the login password
-- installs the `ai-bar` command with `pipx` in editable mode and links `ai-bar`
-  and `ai-bar-openbox-session` into `/usr/local/bin`
+- installs the `ai-bar` command with `pipx` in editable mode and links `ai-bar`,
+  `ai-bar-openbox-session`, and `ai-bar-askpass` into `/usr/local/bin`
 - creates `~/.config/ai-bar/config.json` if it does not exist
 - installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
 - installs the `AI Bar Openbox` session for the login manager
@@ -65,11 +65,15 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
+The default screenshot button opens MATE Screenshot's interactive menu, where you can choose the capture mode and options.
+
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
 
-The small grid button at the far right of the tray tiles the normal, non-minimized windows on the panel monitor in a spiral layout.
+The small grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
 
 The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. Tabs are hidden, so the button that opened the page on screen stays highlighted, the same way the window list marks the active window. `window` and `url` buttons work the same way: the app or web app is embedded in its own tab and keeps running while you switch to another tab. Web apps keep cookies and site data across restarts, and while a web tab is active you can use `Ctrl++` or `Ctrl+=` to zoom in and `Ctrl+-` to zoom out. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
+
+AI Bar exports `SUDO_ASKPASS=/usr/local/bin/ai-bar-askpass` to its embedded terminals when the helper is installed. Agent and terminal commands can request the themed graphical password dialog with `sudo -A`; the helper never stores or logs the password. An existing `SUDO_ASKPASS` value is preserved.
 
 A tab can be detached into a window of its own with the button above the content, for when something started in the panel turns into real work. Nothing is restarted: the terminal keeps its process and the page keeps its state, typed text included. Pressing the detach button in the separate window puts the tab back in the panel; closing that window does the same rather than ending the tool. The reload button next to it restarts the current terminal tool or reloads the current web app. The panel falls back to the first tab that is left, or to an empty area if that was the only one, and while a tool is detached its launcher button is outlined and clicking it raises the window.
 
