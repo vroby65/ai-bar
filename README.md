@@ -14,7 +14,8 @@ Run the script as a regular user, without `sudo`: it requests elevated privilege
 - enables GNOME Keyring so LightDM can unlock it with the login password
 - installs the `ai-bar` command with `pipx` in editable mode and links `ai-bar`,
   `ai-bar-openbox-session`, and `ai-bar-askpass` into `/usr/local/bin`
-- creates `~/.config/ai-bar/config.json` if it does not exist
+- creates `~/.config/ai-bar/config.json` if it does not exist, using the
+  configuration bundled with the installer
 - installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
 - installs the `AI Bar Openbox` session for the login manager
 

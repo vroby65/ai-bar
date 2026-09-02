@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -58,6 +59,23 @@ class PackagingTests(unittest.TestCase):
         self.assertIn(
             "systemctl --user enable gnome-keyring-daemon.socket",
             installer,
+        )
+
+    def test_installer_ships_the_current_user_configuration(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        start_marker = 'cat > "$CONFIG_FILE" <<\'AI_BAR_CONFIG_EOF\'\n'
+        end_marker = "AI_BAR_CONFIG_EOF"
+
+        self.assertIn(start_marker, installer)
+        start = installer.index(start_marker) + len(start_marker)
+        end = installer.index(end_marker, start)
+        shipped_config = json.loads(installer[start:end])
+
+        self.assertEqual(shipped_config["panel"]["side"], "left")
+        self.assertEqual(shipped_config["launcher_groups"][1]["title"], "Tools")
+        self.assertIn(
+            "or-codex",
+            [button["label"] for button in shipped_config["launcher_groups"][1]["buttons"]],
         )
 
     def test_installer_and_session_launcher_have_valid_shell_syntax(self):
