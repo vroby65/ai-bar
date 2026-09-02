@@ -107,6 +107,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
                     "target": "terminal",
                 },
                 {
+                    "label": "App",
+                    "icon": "view-app-grid-symbolic",
+                    "command": ["menugui"],
+                    "target": "window",
+                },
+                {
                     "label": "ZA",
                     "icon": "python",
                     "command": ["za.py"],

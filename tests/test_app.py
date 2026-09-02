@@ -99,6 +99,7 @@ class ClockLayoutTests(unittest.TestCase):
         window.xapp_tray_host = None
         window._open_configuration_assistant = Mock()
         window._tile_windows_spiral = Mock()
+        window._launch = Mock()
 
         status_area = window._build_tray_row()
 
@@ -107,11 +108,18 @@ class ClockLayoutTests(unittest.TestCase):
             child.get_child() for child in status_flow.get_children()
         ]
         tray_row = status_area.get_children()[1]
-        tray_flow, spiral_button = tray_row.get_children()
+        tray_flow, macro_recorder_button, spiral_button = tray_row.get_children()
         self.assertIsInstance(assistant_button, Gtk.Button)
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertNotIn(assistant_button, volume_control.get_children())
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
+        self.assertEqual(
+            macro_recorder_button.get_tooltip_text(), "Avvia Macro Recorder"
+        )
+        self.assertEqual(
+            macro_recorder_button.get_child().get_icon_name()[0],
+            "media-record-symbolic",
+        )
         self.assertEqual(
             spiral_button.get_tooltip_text(), "Affianca le finestre a chiocciola"
         )
@@ -129,6 +137,8 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIs(status_area.get_children()[3], window.window_flow)
         assistant_button.emit("clicked")
         window._open_configuration_assistant.assert_called_once_with()
+        macro_recorder_button.emit("clicked")
+        window._launch.assert_called_once_with(["macro-recorder"])
         spiral_button.emit("clicked")
         window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
@@ -508,6 +518,24 @@ class ClockLayoutTests(unittest.TestCase):
         button.emit("clicked")
 
         window._switch_webview.assert_called_once_with("https://example.com", "Chat")
+        button.destroy()
+
+    def test_gui_menu_launcher_uses_configured_command(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._switch_embedded_window = Mock()
+        window.launcher_buttons = {}
+        button = window._build_launcher_button(
+            {
+                "label": "App",
+                "icon": "view-app-grid-symbolic",
+                "command": ["menugui"],
+                "target": "window",
+            }
+        )
+
+        button.emit("clicked")
+
+        window._switch_embedded_window.assert_called_once_with(["menugui"], "App")
         button.destroy()
 
     def test_legacy_reboot_button_requests_authorization(self):
@@ -1168,6 +1196,29 @@ class ClockLayoutTests(unittest.TestCase):
                 self.assertFalse(ready_file.exists())
                 self.assertFalse(ready_callbacks[0]())
                 self.assertTrue(ready_file.exists())
+
+    def test_realize_does_not_request_an_xid_for_a_wayland_window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.get_window = Mock(return_value=object())
+        window.own_xid = None
+        window._apply_panel_geometry = Mock()
+        window._apply_strut = Mock()
+        window._start_window_list = Mock()
+        window._focus_terminal = Mock()
+        window.xapp_tray_host = None
+        window.tray_host = None
+
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("ai_bar.app.GdkX11.X11Window.get_xid") as get_xid,
+            patch("ai_bar.app.X11SuperToggle"),
+            patch("ai_bar.app.GLib.idle_add"),
+        ):
+            os.environ.pop("AI_BAR_READY_FILE", None)
+            window._on_realize(None)
+
+        get_xid.assert_not_called()
+        self.assertIsNone(window.own_xid)
 
     def test_volume_status_from_wpctl(self):
         self.assertEqual(volume_status_from_wpctl("Volume: 0.40"), "40%")

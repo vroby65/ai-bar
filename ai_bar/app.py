@@ -99,8 +99,6 @@ TERMINAL_PALETTE = (
     "#8be9fd",
     "#ffffff",
 )
-
-
 def clock_labels_fit_inline(available_width: int, time_width: int, date_width: int, spacing: int) -> bool:
     return time_width + date_width + spacing <= available_width
 
@@ -853,6 +851,7 @@ class AiBarWindow(Gtk.Window):
         tray_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tray_row.pack_start(tray_flow, True, True, 0)
         tray_row.pack_end(self._build_spiral_tile_button(), False, False, 0)
+        tray_row.pack_end(self._build_macro_recorder_button(), False, False, 0)
 
         self.window_flow = Gtk.FlowBox()
         self.window_flow.get_style_context().add_class("window-flow")
@@ -979,6 +978,17 @@ class AiBarWindow(Gtk.Window):
         image.set_pixel_size(16)
         button.add(image)
         button.connect("clicked", self._tile_windows_spiral)
+        return button
+
+    def _build_macro_recorder_button(self) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("tray-icon-cell")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text("Avvia Macro Recorder")
+        image = Gtk.Image.new_from_icon_name("media-record-symbolic", Gtk.IconSize.MENU)
+        image.set_pixel_size(16)
+        button.add(image)
+        button.connect("clicked", lambda _button: self._launch(["macro-recorder"]))
         return button
 
     def _open_configuration_assistant(self) -> None:
@@ -1329,7 +1339,7 @@ class AiBarWindow(Gtk.Window):
 
     def _on_realize(self, _window: Gtk.Window) -> None:
         gdk_window = self.get_window()
-        if gdk_window is not None:
+        if isinstance(gdk_window, GdkX11.X11Window):
             self.own_xid = GdkX11.X11Window.get_xid(gdk_window)
         self._apply_panel_geometry()
         self.panel_geometry_applied = True

@@ -55,10 +55,15 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(all(button["maximized"] for button in config["launcher_groups"][0]["buttons"]))
         self.assertEqual(
             [button["label"] for button in config["launcher_groups"][1]["buttons"]],
-            ["menu", "ZA", "or-codex", "DS Code", "Codex", "Calc", "Meteo", "terminal"],
+            ["menu", "App", "ZA", "or-codex", "DS Code", "Codex", "Calc", "Meteo", "terminal"],
         )
-        self.assertEqual(config["launcher_groups"][1]["buttons"][5]["target"], "window")
-        self.assertEqual(config["launcher_groups"][1]["buttons"][6]["target"], "url")
+        self.assertEqual(config["launcher_groups"][1]["buttons"][1]["target"], "window")
+        self.assertEqual(
+            config["launcher_groups"][1]["buttons"][1]["command"],
+            ["menugui"],
+        )
+        self.assertEqual(config["launcher_groups"][1]["buttons"][6]["target"], "window")
+        self.assertEqual(config["launcher_groups"][1]["buttons"][7]["target"], "url")
         self.assertEqual(config["terminal"]["command"], ["menu"])
         self.assertEqual(
             [item["type"] for item in config["tray"]["items"]],
