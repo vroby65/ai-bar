@@ -101,12 +101,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "columns": 4,
             "buttons": [
                 {
-                    "label": "menu",
-                    "icon": "view-app-grid-symbolic",
-                    "command": ["menu"],
-                    "target": "terminal",
-                },
-                {
                     "label": "App",
                     "icon": "view-app-grid-symbolic",
                     "command": ["menugui"],
