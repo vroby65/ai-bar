@@ -78,6 +78,7 @@ FAVICON_SIZE = 24
 PAGE_ACTION_ICON_SIZE = 16
 FAVICON_TIMEOUT_SECONDS = 5
 FAVICON_MAX_BYTES = 1 << 20
+ASKPASS_PATH = "/usr/local/bin/ai-bar-askpass"
 TERMINAL_FOREGROUND = "#f2f2ee"
 TERMINAL_BACKGROUND = "#151819"
 TERMINAL_PALETTE = (
@@ -98,8 +99,6 @@ TERMINAL_PALETTE = (
     "#8be9fd",
     "#ffffff",
 )
-
-
 def clock_labels_fit_inline(available_width: int, time_width: int, date_width: int, spacing: int) -> bool:
     return time_width + date_width + spacing <= available_width
 
@@ -275,6 +274,29 @@ def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
     return None
 
 
+def focus_x11_window(xid: int) -> bool:
+    if X is None or xlib_display is None:
+        return False
+
+    display = None
+    errors: list[Any] = []
+    try:
+        display = xlib_display.Display()
+        window = display.create_resource_object("window", xid)
+        window.set_input_focus(
+            X.RevertToParent,
+            X.CurrentTime,
+            onerror=errors.append,
+        )
+        display.sync()
+        return not errors
+    except Exception:
+        return False
+    finally:
+        if display is not None:
+            display.close()
+
+
 def centered_position(area: Any, width: int, height: int) -> tuple[int, int]:
     # Top left corner that centres a window of this size inside the area. A
     # window larger than the area rests on the origin rather than taking
@@ -287,8 +309,9 @@ def centered_position(area: Any, width: int, height: int) -> tuple[int, int]:
 def spiral_rectangles(area: Any, count: int) -> list[tuple[int, int, int, int]]:
     rectangles = []
     x, y, width, height = area.x, area.y, area.width, area.height
+    start_direction = 1 if width < height else 0
     for index in range(max(0, count - 1)):
-        direction = index % 4
+        direction = (start_direction + index) % 4
         if direction == 0:
             split = width // 2
             rectangles.append((x, y, split, height))
@@ -608,7 +631,7 @@ scale.volume-slider {
 }
 
 button.launcher-button {
-  min-height: 60px;
+  min-height: 48px;
 }
 
 button.launcher-button.icon-only-launcher {
@@ -678,6 +701,7 @@ class AiBarWindow(Gtk.Window):
         self.terminal: Vte.Terminal | None = None
         self.terminals: dict[str, Vte.Terminal] = {}
         self.embedded: dict[str, Gtk.Widget] = {}
+        self.embedded_window_xids: dict[str, int] = {}
         self.launcher_buttons: dict[str, Gtk.Widget] = {}
         self.detached: dict[str, Gtk.Window] = {}
         self.detach_button: Gtk.Widget | None = None
@@ -851,6 +875,7 @@ class AiBarWindow(Gtk.Window):
         tray_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tray_row.pack_start(tray_flow, True, True, 0)
         tray_row.pack_end(self._build_spiral_tile_button(), False, False, 0)
+        tray_row.pack_end(self._build_macro_recorder_button(), False, False, 0)
 
         self.window_flow = Gtk.FlowBox()
         self.window_flow.get_style_context().add_class("window-flow")
@@ -907,6 +932,11 @@ class AiBarWindow(Gtk.Window):
         button.add(inner)
 
         command = item.get("command")
+        if item.get("type") == "screenshot" and command == [
+            "/usr/bin/mate-screenshot",
+            "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png",
+        ]:
+            command = ["/usr/bin/mate-screenshot", "--interactive"]
         if command:
             button.connect("clicked", lambda _button: self._launch(command))
 
@@ -972,6 +1002,17 @@ class AiBarWindow(Gtk.Window):
         image.set_pixel_size(16)
         button.add(image)
         button.connect("clicked", self._tile_windows_spiral)
+        return button
+
+    def _build_macro_recorder_button(self) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("tray-icon-cell")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        button.set_tooltip_text("Avvia Macro Recorder")
+        image = Gtk.Image.new_from_icon_name("media-record-symbolic", Gtk.IconSize.MENU)
+        image.set_pixel_size(16)
+        button.add(image)
+        button.connect("clicked", lambda _button: self._launch(["macro-recorder"]))
         return button
 
     def _open_configuration_assistant(self) -> None:
@@ -1322,7 +1363,7 @@ class AiBarWindow(Gtk.Window):
 
     def _on_realize(self, _window: Gtk.Window) -> None:
         gdk_window = self.get_window()
-        if gdk_window is not None:
+        if isinstance(gdk_window, GdkX11.X11Window):
             self.own_xid = GdkX11.X11Window.get_xid(gdk_window)
         self._apply_panel_geometry()
         self.panel_geometry_applied = True
@@ -1686,6 +1727,23 @@ class AiBarWindow(Gtk.Window):
         except Exception as exc:
             print(f"ai-bar: finestra non attivata {xid}: {exc}", file=sys.stderr)
 
+    def _focused_monitor(self, window: Any | None) -> Any | None:
+        if window is None:
+            return None
+        try:
+            if self.own_xid is not None and int(window.get_xid()) == self.own_xid:
+                return None
+            x, y, width, height = window.get_geometry()
+            display = Gdk.Display.get_default()
+            if display is None:
+                return None
+            return display.get_monitor_at_point(
+                x + width // 2,
+                y + height // 2,
+            )
+        except Exception:
+            return None
+
     def _tile_windows_spiral(self, _button: Gtk.Button | None = None) -> None:
         if Wnck is None or self.wnck_screen is None:
             return
@@ -1693,7 +1751,16 @@ class AiBarWindow(Gtk.Window):
         try:
             self.wnck_screen.force_update()
             active_workspace = self.wnck_screen.get_active_workspace()
+            active_window = self.wnck_screen.get_active_window()
             monitor = self._monitor_geometry()
+            workarea = self._monitor_workarea()
+            focused_monitor = self._focused_monitor(active_window)
+            if focused_monitor is not None:
+                monitor = focused_monitor.get_geometry()
+                try:
+                    workarea = focused_monitor.get_workarea()
+                except Exception:
+                    workarea = monitor
             windows = []
             for window in reversed(self.wnck_screen.get_windows_stacked()):
                 xid = int(window.get_xid())
@@ -1727,7 +1794,7 @@ class AiBarWindow(Gtk.Window):
                 | Wnck.WindowMoveResizeMask.HEIGHT
             )
             for window, rectangle in zip(
-                windows, spiral_rectangles(self._monitor_workarea(), len(windows))
+                windows, spiral_rectangles(workarea, len(windows))
             ):
                 window.unmaximize()
                 window.set_geometry(
@@ -1904,23 +1971,43 @@ class AiBarWindow(Gtk.Window):
         if self.terminal_notebook is None:
             self._show_error("Terminale non disponibile.")
             return
+
+        key = "window:" + command_to_shell_line(command)
+        detached = self.detached.get(key)
+        if detached is not None:
+            detached.present()
+            widget = self.embedded.get(key)
+            if widget is not None and key in self.embedded_window_xids:
+                GLib.idle_add(self._focus_embedded_window, widget)
+            return
+
         if Wnck is None or self.wnck_screen is None:
             print("ai-bar: libwnck non disponibile, finestra aperta esternamente.", file=sys.stderr)
             self._launch(command)
             return
 
-        key = "window:" + command_to_shell_line(command)
         widget = self.embedded.get(key)
         if widget is None:
             try:
-                subprocess.Popen(command, start_new_session=True)
+                self.wnck_screen.force_update()
+                existing_xids = {
+                    int(window.get_xid())
+                    for window in self.wnck_screen.get_windows_stacked()
+                }
+            except Exception as exc:
+                print(f"ai-bar: stato finestre non disponibile: {exc}", file=sys.stderr)
+                self._launch(command)
+                return
+            try:
+                if isinstance(command, str):
+                    subprocess.Popen(command, shell=True, start_new_session=True)
+                else:
+                    subprocess.Popen(command, start_new_session=True)
             except Exception as exc:
                 self._show_error(f"Comando non avviato: {command}\n{exc}")
                 return
-            socket = Gtk.Socket()
-            socket.set_hexpand(True)
-            socket.set_vexpand(True)
-            socket.connect("realize", self._embed_launched_window)
+            socket = self._build_embedded_socket(key)
+            socket.connect("realize", self._embed_launched_window, existing_xids)
             widget = socket
             self.embedded[key] = socket
             page = self.terminal_notebook.append_page(
@@ -1932,17 +2019,39 @@ class AiBarWindow(Gtk.Window):
         widget.show_all()
         self.terminal_notebook.set_current_page(page)
         self.present()
+        widget.grab_focus()
+        if key in self.embedded_window_xids:
+            GLib.idle_add(self._focus_embedded_window, widget)
 
-    def _embed_launched_window(self, socket: Gtk.Socket) -> None:
+    def _build_embedded_socket(self, key: str) -> Gtk.Socket:
+        socket = Gtk.Socket()
+        socket.set_hexpand(True)
+        socket.set_vexpand(True)
+        socket.connect("destroy", self._on_embedded_window_destroyed, key)
+        return socket
+
+    def _on_embedded_window_destroyed(
+        self, socket: Gtk.Socket, key: str
+    ) -> None:
+        if self.embedded.get(key) is socket:
+            self.embedded.pop(key, None)
+            self.embedded_window_xids.pop(key, None)
+
+    def _focus_embedded_window(self, socket: Gtk.Socket) -> bool:
+        key = self._page_key(socket)
+        if key is not None:
+            xid = self.embedded_window_xids.get(key)
+            if xid is not None:
+                focus_x11_window(xid)
+        return False
+
+    def _embed_launched_window(
+        self, socket: Gtk.Socket, existing_xids: set[int]
+    ) -> None:
         if self.wnck_screen is None:
             return
-        try:
-            self.wnck_screen.force_update()
-            existing_xids = {
-                int(window.get_xid()) for window in self.wnck_screen.get_windows_stacked()
-            }
-        except Exception as exc:
-            print(f"ai-bar: stato finestre non disponibile: {exc}", file=sys.stderr)
+        key = self._page_key(socket)
+        if key is None:
             return
         attempts_remaining = EMBED_POLL_ATTEMPTS
 
@@ -1952,8 +2061,22 @@ class AiBarWindow(Gtk.Window):
                 self.wnck_screen.force_update()
                 for window in self.wnck_screen.get_windows_stacked():
                     xid = int(window.get_xid())
-                    if xid != self.own_xid and xid not in existing_xids and not window.is_skip_tasklist():
-                        socket.add_id(xid)
+                    if (
+                        xid != self.own_xid
+                        and xid not in existing_xids
+                        and xid not in self.embedded_window_xids.values()
+                        and not window.is_skip_tasklist()
+                    ):
+                        self.embedded_window_xids[key] = xid
+                        try:
+                            socket.add_id(xid)
+                        except Exception:
+                            self.embedded_window_xids.pop(key, None)
+                            raise
+                        detach_button = getattr(self, "detach_button", None)
+                        if detach_button is not None:
+                            detach_button.set_sensitive(True)
+                        GLib.idle_add(self._focus_embedded_window, socket)
                         return False
             except Exception as exc:
                 print(f"ai-bar: finestra non incorporata: {exc}", file=sys.stderr)
@@ -2084,12 +2207,12 @@ class AiBarWindow(Gtk.Window):
         return button
 
     def _detachable_page(self, page: Gtk.Widget | None) -> bool:
-        # Le finestre incorporate con Gtk.Socket sono escluse: staccarle vuol
-        # dire smontare l'incorporamento, e il programma ospite ne soffre.
-        # Tutto il resto si stacca, scheda iniziale compresa.
         if page is None:
             return False
-        return not isinstance(page, Gtk.Socket)
+        if not isinstance(page, Gtk.Socket):
+            return True
+        key = self._page_key(page)
+        return key is not None and key in self.embedded_window_xids
 
     def _page_key(self, page: Gtk.Widget) -> str | None:
         for pages in (self.terminals, self.embedded):
@@ -2111,11 +2234,8 @@ class AiBarWindow(Gtk.Window):
             return
 
         title = notebook.get_tab_label_text(page) or "ai-bar"
-        notebook.remove(page)
-
         window = Gtk.Window(title=f"{title} \u2014 ai-bar")
         window.set_default_size(900, 700)
-        window.add(page)
         window.connect("delete-event", self._on_detached_closed, key)
 
         header = Gtk.HeaderBar(title=title)
@@ -2140,8 +2260,31 @@ class AiBarWindow(Gtk.Window):
         header.pack_end(reload_button)
         window.set_titlebar(header)
 
+        if isinstance(page, Gtk.Socket):
+            xid = self.embedded_window_xids.get(key)
+            if xid is None:
+                window.destroy()
+                return
+            detached_page = self._build_embedded_socket(key)
+            window.add(detached_page)
+            window.show_all()
+            self.embedded[key] = detached_page
+            try:
+                detached_page.add_id(xid)
+            except Exception as exc:
+                self.embedded[key] = page
+                window.destroy()
+                self._show_error(f"Finestra non staccata: {exc}")
+                return
+            notebook.remove(page)
+            page.destroy()
+            GLib.idle_add(self._focus_embedded_window, detached_page)
+        else:
+            notebook.remove(page)
+            window.add(page)
+            window.show_all()
+
         self.detached[key] = window
-        window.show_all()
         self._place_detached(window)
 
         # Si torna alla prima scheda rimasta. Se non ne resta nessuna l'area
@@ -2173,25 +2316,49 @@ class AiBarWindow(Gtk.Window):
     def _reattach(self, key: str, window: Gtk.Window) -> None:
         notebook = self.terminal_notebook
         page = window.get_child()
-        self.detached.pop(key, None)
-        if page is not None:
-            window.remove(page)
-        window.destroy()
-        if notebook is None or page is None:
-            return
         title = (window.get_title() or "").removesuffix(" \u2014 ai-bar")
-        index = notebook.append_page(page, Gtk.Label(label=title or "Scheda"))
-        page.show_all()
+        if notebook is None or page is None:
+            self.detached.pop(key, None)
+            if page is not None:
+                window.remove(page)
+            window.destroy()
+            return
+
+        if isinstance(page, Gtk.Socket):
+            xid = self.embedded_window_xids.get(key)
+            if xid is None:
+                return
+            panel_page = self._build_embedded_socket(key)
+            index = notebook.append_page(
+                panel_page,
+                Gtk.Label(label=title or "Scheda"),
+            )
+            panel_page.show_all()
+            self.embedded[key] = panel_page
+            try:
+                panel_page.add_id(xid)
+            except Exception as exc:
+                self.embedded[key] = page
+                notebook.remove(panel_page)
+                panel_page.destroy()
+                self._show_error(f"Finestra non riattaccata: {exc}")
+                return
+            window.remove(page)
+            page.destroy()
+            GLib.idle_add(self._focus_embedded_window, panel_page)
+        else:
+            window.remove(page)
+            index = notebook.append_page(page, Gtk.Label(label=title or "Scheda"))
+            page.show_all()
+
+        self.detached.pop(key, None)
+        window.destroy()
         notebook.set_current_page(index)
         self.present()
         self._refresh_launcher_states()
 
     def _reloadable_page(self, page: Gtk.Widget | None) -> bool:
-        return (
-            page is not None
-            and not isinstance(page, Gtk.Socket)
-            and self._page_key(page) is not None
-        )
+        return page is not None and self._page_key(page) is not None
 
     def _reload_current_page(self) -> None:
         notebook = self.terminal_notebook
@@ -2209,6 +2376,16 @@ class AiBarWindow(Gtk.Window):
             return
 
         if key in self.embedded:
+            if isinstance(page, Gtk.Socket):
+                notebook = self.terminal_notebook
+                if notebook is None:
+                    return
+                title = notebook.get_tab_label_text(page) or "Scheda"
+                command = key.removeprefix("window:")
+                self.embedded.pop(key, None)
+                page.destroy()
+                self._switch_embedded_window(command, title)
+                return
             page.reload()
             return
 
@@ -2724,6 +2901,13 @@ def terminal_argv(command: str | list[str] | None, width_px: int | None = None) 
     return argv
 
 
+def configure_askpass_environment() -> None:
+    if "SUDO_ASKPASS" in os.environ:
+        return
+    if os.access(ASKPASS_PATH, os.X_OK):
+        os.environ["SUDO_ASKPASS"] = ASKPASS_PATH
+
+
 def launcher_page_key(button_config: dict[str, Any]) -> str | None:
     # La stessa chiave con cui la scheda viene registrata: e' cosi' che si
     # risale dal contenuto mostrato al bottone che lo ha aperto.
@@ -2901,6 +3085,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_default_config:
         print(json.dumps(default_config(), indent=2))
         return 0
+
+    configure_askpass_environment()
 
     try:
         config = load_config(args.config)

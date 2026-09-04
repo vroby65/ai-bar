@@ -39,6 +39,8 @@ Keep every change small and traceable to the request:
 - `scripts/ai-bar-openbox-session`: coordinates `ai-bar` and Openbox startup,
   supervises and restarts the panel, and safely forwards reboot and power-off
   requests.
+- `scripts/ai-bar-askpass`: themed graphical askpass helper installed for commands
+  launched from the panel.
 - `packaging/`: desktop session and Openbox theme installed by the project.
 - `tests/`: `unittest` tests organized by module or subsystem.
 
@@ -64,6 +66,8 @@ The default user configuration is `$XDG_CONFIG_HOME/ai-bar/config.json`, or
 data stored under `$XDG_DATA_HOME/ai-bar/webkit`, or
 `~/.local/share/ai-bar/webkit`. Web credentials must remain in the Secret Service
 keyring and must never appear in JSON, logs, tests, or the repository.
+The askpass helper may emit the entered password only on standard output for the
+invoking `sudo -A` process; it must never persist or log it.
 
 ## Invariants to preserve
 

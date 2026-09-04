@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+exec yad \
+    --entry \
+    --title="Autorizzazione amministrativa" \
+    --window-icon="dialog-password" \
+    --image="dialog-password" \
+    --image-on-top \
+    --text="<span size='large' weight='bold'>Conferma l’operazione</span>\nInserisci la password del tuo account per continuare." \
+    --text-align="center" \
+    --entry-label="Password" \
+    --hide-text \
+    --button="Annulla":1 \
+    --button="Autorizza":0 \
+    --buttons-layout="end" \
+    --center \
+    --fixed \
+    --on-top \
+    --skip-taskbar \
+    --width=440 \
+    --borders=24

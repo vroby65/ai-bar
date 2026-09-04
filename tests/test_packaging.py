@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -34,9 +35,55 @@ class PackagingTests(unittest.TestCase):
             "/usr/local/bin/ai-bar-openbox-session",
             installer,
         )
+        self.assertIn(
+            'ln -sfn -- "$PROJECT_DIR/scripts/ai-bar-askpass" '
+            "/usr/local/bin/ai-bar-askpass",
+            installer,
+        )
+
+    def test_installer_provides_the_graphical_askpass_dependency(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("    yad\n", installer)
+
+    def test_installer_enables_gnome_keyring_for_lightdm(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("    gnome-keyring\n", installer)
+        self.assertIn("    libpam-gnome-keyring\n", installer)
+        self.assertIn(
+            "systemctl --user unmask gnome-keyring-daemon.service "
+            "gnome-keyring-daemon.socket",
+            installer,
+        )
+        self.assertIn(
+            "systemctl --user enable gnome-keyring-daemon.socket",
+            installer,
+        )
+
+    def test_installer_ships_the_current_user_configuration(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        start_marker = 'cat > "$CONFIG_FILE" <<\'AI_BAR_CONFIG_EOF\'\n'
+        end_marker = "AI_BAR_CONFIG_EOF"
+
+        self.assertIn(start_marker, installer)
+        start = installer.index(start_marker) + len(start_marker)
+        end = installer.index(end_marker, start)
+        shipped_config = json.loads(installer[start:end])
+
+        self.assertEqual(shipped_config["panel"]["side"], "left")
+        self.assertEqual(shipped_config["launcher_groups"][1]["title"], "Tools")
+        self.assertIn(
+            "or-codex",
+            [button["label"] for button in shipped_config["launcher_groups"][1]["buttons"]],
+        )
 
     def test_installer_and_session_launcher_have_valid_shell_syntax(self):
-        for path in (ROOT / "install.sh", ROOT / "scripts" / "ai-bar-openbox-session"):
+        for path in (
+            ROOT / "install.sh",
+            ROOT / "scripts" / "ai-bar-openbox-session",
+            ROOT / "scripts" / "ai-bar-askpass",
+        ):
             subprocess.run(["bash", "-n", path], check=True)
 
     def test_session_launcher_uses_installed_command(self):

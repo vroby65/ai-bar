@@ -24,6 +24,7 @@ from ai_bar.app import (
     application_ids_match,
     clean_window_title,
     clock_labels_fit_inline,
+    command_to_shell_line,
     configuration_assistant_command,
     find_window_by_xid,
     maximize_launched_window,
@@ -69,6 +70,11 @@ class ClockLayoutTests(unittest.TestCase):
 
         self.assertIn("border-color: #63b68e;", open_window_css)
 
+    def test_tool_buttons_are_compact(self):
+        launcher_css = CSS.split("button.launcher-button {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("min-height: 48px;", launcher_css)
+
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
@@ -94,6 +100,7 @@ class ClockLayoutTests(unittest.TestCase):
         window.xapp_tray_host = None
         window._open_configuration_assistant = Mock()
         window._tile_windows_spiral = Mock()
+        window._launch = Mock()
 
         status_area = window._build_tray_row()
 
@@ -102,11 +109,18 @@ class ClockLayoutTests(unittest.TestCase):
             child.get_child() for child in status_flow.get_children()
         ]
         tray_row = status_area.get_children()[1]
-        tray_flow, spiral_button = tray_row.get_children()
+        tray_flow, macro_recorder_button, spiral_button = tray_row.get_children()
         self.assertIsInstance(assistant_button, Gtk.Button)
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertNotIn(assistant_button, volume_control.get_children())
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
+        self.assertEqual(
+            macro_recorder_button.get_tooltip_text(), "Avvia Macro Recorder"
+        )
+        self.assertEqual(
+            macro_recorder_button.get_child().get_icon_name()[0],
+            "media-record-symbolic",
+        )
         self.assertEqual(
             spiral_button.get_tooltip_text(), "Affianca le finestre a chiocciola"
         )
@@ -124,9 +138,48 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIs(status_area.get_children()[3], window.window_flow)
         assistant_button.emit("clicked")
         window._open_configuration_assistant.assert_called_once_with()
+        macro_recorder_button.emit("clicked")
+        window._launch.assert_called_once_with(["macro-recorder"])
         spiral_button.emit("clicked")
         window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
+
+    def test_legacy_screenshot_button_opens_the_interactive_menu(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch = Mock()
+        button = window._build_status_button(
+            {
+                "type": "screenshot",
+                "label": "Screenshot",
+                "command": [
+                    "/usr/bin/mate-screenshot",
+                    "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png",
+                ],
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch.assert_called_once_with(
+            ["/usr/bin/mate-screenshot", "--interactive"]
+        )
+        button.destroy()
+
+    def test_screenshot_button_preserves_a_custom_command(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch = Mock()
+        button = window._build_status_button(
+            {
+                "type": "screenshot",
+                "label": "Screenshot",
+                "command": ["flameshot", "gui"],
+            }
+        )
+
+        button.emit("clicked")
+
+        window._launch.assert_called_once_with(["flameshot", "gui"])
+        button.destroy()
 
     def test_spiral_rectangles_turn_around_the_remaining_space(self):
         area = SimpleNamespace(x=400, y=0, width=800, height=600)
@@ -138,6 +191,19 @@ class ClockLayoutTests(unittest.TestCase):
                 (800, 0, 400, 300),
                 (1000, 300, 200, 300),
                 (800, 300, 200, 300),
+            ],
+        )
+
+    def test_spiral_rectangles_start_top_to_bottom_in_portrait_area(self):
+        area = SimpleNamespace(x=400, y=0, width=600, height=800)
+
+        self.assertEqual(
+            spiral_rectangles(area, 4),
+            [
+                (400, 0, 600, 400),
+                (700, 400, 300, 400),
+                (400, 600, 300, 200),
+                (400, 400, 300, 200),
             ],
         )
 
@@ -177,6 +243,7 @@ class ClockLayoutTests(unittest.TestCase):
         other_monitor = Window(40, (2100, 100, 400, 400))
         screen = Mock()
         screen.get_active_workspace.return_value = object()
+        screen.get_active_window.return_value = None
         screen.get_windows_stacked.return_value = [left, topmost, minimized, other_monitor]
         window = AiBarWindow.__new__(AiBarWindow)
         window.wnck_screen = screen
@@ -200,6 +267,72 @@ class ClockLayoutTests(unittest.TestCase):
         left.set_geometry.assert_called_once_with(0, 15, 1160, 0, 760, 1080)
         minimized.set_geometry.assert_not_called()
         other_monitor.set_geometry.assert_not_called()
+
+    def test_spiral_tiling_uses_the_focused_window_monitor(self):
+        class Window:
+            def __init__(self, xid, geometry):
+                self.xid = xid
+                self.geometry = geometry
+                self.unmaximize = Mock()
+                self.set_geometry = Mock()
+
+            def get_xid(self):
+                return self.xid
+
+            def get_window_type(self):
+                return "normal"
+
+            def is_skip_tasklist(self):
+                return False
+
+            def is_minimized(self):
+                return False
+
+            def is_pinned(self):
+                return False
+
+            def is_on_workspace(self, _workspace):
+                return True
+
+            def get_geometry(self):
+                return self.geometry
+
+        left = Window(10, (500, 100, 400, 400))
+        focused = Window(20, (2200, 100, 400, 400))
+        right = Window(30, (2600, 100, 400, 400))
+        screen = Mock()
+        screen.get_active_workspace.return_value = object()
+        screen.get_active_window.return_value = focused
+        screen.get_windows_stacked.return_value = [left, focused, right]
+        right_monitor = SimpleNamespace(
+            get_geometry=lambda: SimpleNamespace(x=1920, y=0, width=1080, height=1080),
+            get_workarea=lambda: SimpleNamespace(x=1920, y=0, width=1080, height=1080)
+        )
+        display = SimpleNamespace(get_monitor_at_point=Mock(return_value=right_monitor))
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.wnck_screen = screen
+        window.own_xid = 99
+        window._monitor_geometry = lambda: SimpleNamespace(
+            x=0, y=0, width=1920, height=1080
+        )
+        window._monitor_workarea = lambda: SimpleNamespace(
+            x=0, y=0, width=1920, height=1080
+        )
+        wnck = SimpleNamespace(
+            WindowType=SimpleNamespace(NORMAL="normal"),
+            WindowGravity=SimpleNamespace(CURRENT=0),
+            WindowMoveResizeMask=SimpleNamespace(X=1, Y=2, WIDTH=4, HEIGHT=8),
+        )
+
+        with patch("ai_bar.app.Wnck", wnck), patch(
+            "ai_bar.app.Gdk.Display.get_default", return_value=display
+        ):
+            window._tile_windows_spiral()
+
+        display.get_monitor_at_point.assert_called_once_with(2400, 300)
+        right.set_geometry.assert_called_once_with(0, 15, 1920, 0, 540, 1080)
+        focused.set_geometry.assert_called_once_with(0, 15, 2460, 0, 540, 1080)
+        left.set_geometry.assert_not_called()
 
     def test_configuration_assistant_command_uses_active_config(self):
         self.assertEqual(
@@ -386,6 +519,24 @@ class ClockLayoutTests(unittest.TestCase):
         button.emit("clicked")
 
         window._switch_webview.assert_called_once_with("https://example.com", "Chat")
+        button.destroy()
+
+    def test_gui_menu_launcher_uses_configured_command(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._switch_embedded_window = Mock()
+        window.launcher_buttons = {}
+        button = window._build_launcher_button(
+            {
+                "label": "App",
+                "icon": "view-app-grid-symbolic",
+                "command": ["menugui"],
+                "target": "window",
+            }
+        )
+
+        button.emit("clicked")
+
+        window._switch_embedded_window.assert_called_once_with(["menugui"], "App")
         button.destroy()
 
     def test_legacy_reboot_button_requests_authorization(self):
@@ -853,6 +1004,122 @@ class ClockLayoutTests(unittest.TestCase):
         hermes.grab_focus.assert_called_once_with()
         self.assertIs(window.terminal, hermes)
 
+    def test_switch_embedded_window_focuses_the_child_x11_window(self):
+        # Il solo grab_focus sul Gtk.Socket non inoltra la tastiera a una
+        # normale Gtk.Window incorporata, come menugui.
+        window = AiBarWindow.__new__(AiBarWindow)
+        socket = Mock()
+        key = "window:" + command_to_shell_line(["menugui"])
+        window.terminals = {}
+        window.embedded = {key: socket}
+        window.embedded_window_xids = {key: 20}
+        window.detached = {}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.page_num.return_value = 2
+        window.present = Mock()
+        window.wnck_screen = Mock()
+
+        with (
+            patch("ai_bar.app.GLib.idle_add") as idle_add,
+            patch("ai_bar.app.focus_x11_window") as focus_x11_window,
+        ):
+            window._switch_embedded_window(["menugui"], "Menu")
+            focus_callback = idle_add.call_args.args
+            self.assertFalse(focus_callback[0](*focus_callback[1:]))
+
+        window.terminal_notebook.set_current_page.assert_called_once_with(2)
+        socket.grab_focus.assert_called_once_with()
+        focus_x11_window.assert_called_once_with(20)
+
+    def test_fast_window_is_not_mistaken_for_one_existing_before_launch(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        key = "window:" + command_to_shell_line(["menugui"])
+        old_window = Mock()
+        old_window.get_xid.return_value = 10
+        launched_window = Mock()
+        launched_window.get_xid.return_value = 20
+        launched_window.is_skip_tasklist.return_value = False
+        launched = False
+        window.wnck_screen = Mock()
+        window.wnck_screen.get_windows_stacked.side_effect = (
+            lambda: [old_window, launched_window] if launched else [old_window]
+        )
+        window.own_xid = 99
+        window.terminals = {}
+        window.embedded = {}
+        window.embedded_window_xids = {}
+        window.detached = {}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.append_page.return_value = 1
+        window.present = Mock()
+        socket = Mock()
+
+        def launch(*_args, **_kwargs):
+            nonlocal launched
+            launched = True
+
+        with (
+            patch("ai_bar.app.Gtk.Socket", return_value=socket),
+            patch("ai_bar.app.subprocess.Popen", side_effect=launch),
+            patch("ai_bar.app.GLib.timeout_add") as timeout_add,
+        ):
+            window._switch_embedded_window(["menugui"], "App")
+            realize_call = socket.connect.call_args.args
+            realize_call[1](socket, *realize_call[2:])
+            timeout_add.call_args.args[1]()
+
+        socket.add_id.assert_called_once_with(20)
+        self.assertEqual(window.embedded_window_xids[key], 20)
+
+    def test_pending_window_tools_do_not_embed_the_same_window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        first_launched_window = Mock()
+        first_launched_window.get_xid.return_value = 20
+        first_launched_window.is_skip_tasklist.return_value = False
+        second_launched_window = Mock()
+        second_launched_window.get_xid.return_value = 30
+        second_launched_window.is_skip_tasklist.return_value = False
+        visible_windows = [first_launched_window]
+        window.wnck_screen = Mock()
+        window.wnck_screen.get_windows_stacked.side_effect = lambda: visible_windows
+        window.own_xid = 99
+        first_socket = Mock()
+        second_socket = Mock()
+        first_key = "window:first"
+        second_key = "window:second"
+        window.terminals = {}
+        window.embedded = {first_key: first_socket, second_key: second_socket}
+        window.embedded_window_xids = {}
+
+        with patch("ai_bar.app.GLib.timeout_add") as timeout_add:
+            window._embed_launched_window(first_socket, set())
+            first_poll = timeout_add.call_args.args[1]
+            window._embed_launched_window(second_socket, set())
+            second_poll = timeout_add.call_args.args[1]
+
+        self.assertFalse(first_poll())
+        self.assertTrue(second_poll())
+        visible_windows.append(second_launched_window)
+        self.assertFalse(second_poll())
+        first_socket.add_id.assert_called_once_with(20)
+        second_socket.add_id.assert_called_once_with(30)
+        self.assertEqual(
+            window.embedded_window_xids,
+            {first_key: 20, second_key: 30},
+        )
+
+    def test_destroyed_window_tool_is_not_reused(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        socket = Mock()
+        key = "window:menugui"
+        window.embedded = {key: socket}
+        window.embedded_window_xids = {key: 20}
+
+        window._on_embedded_window_destroyed(socket, key)
+
+        self.assertNotIn(key, window.embedded)
+        self.assertNotIn(key, window.embedded_window_xids)
+
     def test_switch_terminal_keeps_other_tool_sessions_alive(self):
         window = AiBarWindow.__new__(AiBarWindow)
         hermes = Mock()
@@ -1046,6 +1313,29 @@ class ClockLayoutTests(unittest.TestCase):
                 self.assertFalse(ready_file.exists())
                 self.assertFalse(ready_callbacks[0]())
                 self.assertTrue(ready_file.exists())
+
+    def test_realize_does_not_request_an_xid_for_a_wayland_window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.get_window = Mock(return_value=object())
+        window.own_xid = None
+        window._apply_panel_geometry = Mock()
+        window._apply_strut = Mock()
+        window._start_window_list = Mock()
+        window._focus_terminal = Mock()
+        window.xapp_tray_host = None
+        window.tray_host = None
+
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("ai_bar.app.GdkX11.X11Window.get_xid") as get_xid,
+            patch("ai_bar.app.X11SuperToggle"),
+            patch("ai_bar.app.GLib.idle_add"),
+        ):
+            os.environ.pop("AI_BAR_READY_FILE", None)
+            window._on_realize(None)
+
+        get_xid.assert_not_called()
+        self.assertIsNone(window.own_xid)
 
     def test_volume_status_from_wpctl(self):
         self.assertEqual(volume_status_from_wpctl("Volume: 0.40"), "40%")
@@ -1448,6 +1738,7 @@ class DetachTests(unittest.TestCase):
         window = AiBarWindow.__new__(AiBarWindow)
         window.terminals = {}
         window.embedded = {}
+        window.embedded_window_xids = {}
         window.detached = {}
         window.launcher_buttons = {}
         window.detach_button = None
@@ -1619,6 +1910,24 @@ class DetachTests(unittest.TestCase):
 
         webview.reload.assert_called_once_with()
 
+    def test_reload_button_restarts_the_current_window_tool(self):
+        window = self._window()
+        notebook = Gtk.Notebook()
+        window.terminal_notebook = notebook
+        socket = Gtk.Socket()
+        key = "window:menugui"
+        window.embedded = {key: socket}
+        window._switch_embedded_window = Mock()
+        notebook.append_page(socket, Gtk.Label(label="Menu"))
+        notebook.show_all()
+
+        self.assertTrue(window._reloadable_page(socket))
+        window._reload_page(socket)
+
+        self.assertNotIn(key, window.embedded)
+        self.assertEqual(notebook.page_num(socket), -1)
+        window._switch_embedded_window.assert_called_once_with("menugui", "Menu")
+
     def test_a_returning_tab_is_reachable_from_its_button_again(self):
         window = self._window()
         window.present = Mock()
@@ -1636,11 +1945,84 @@ class DetachTests(unittest.TestCase):
         self.assertIs(window.terminals["zsh"], page)
         self.assertEqual(window.detached, {})
 
-    def test_an_embedded_window_cannot_be_detached(self):
-        # Staccare un Gtk.Socket vuol dire smontare l'incorporamento.
+    def test_an_embedded_window_can_be_detached_after_it_is_attached(self):
         window = self._window()
+        socket = Gtk.Socket()
+        key = "window:menugui"
+        window.embedded = {key: socket}
+        window.embedded_window_xids = {key: 20}
 
-        self.assertFalse(window._detachable_page(Gtk.Socket()))
+        self.assertTrue(window._detachable_page(socket))
+
+    def test_detaching_an_embedded_window_moves_its_xid_to_a_new_socket(self):
+        window = self._window()
+        source = Gtk.Socket()
+        replacement = Mock()
+        detached = Mock()
+        key = "window:menugui"
+        window.embedded = {key: source}
+        window.embedded_window_xids = {key: 20}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.get_current_page.return_value = 0
+        window.terminal_notebook.get_nth_page.return_value = source
+        window.terminal_notebook.get_tab_label_text.return_value = "Menu"
+        window.terminal_notebook.get_n_pages.return_value = 0
+        window._place_detached = Mock()
+        window._refresh_launcher_states = Mock()
+
+        with (
+            patch.object(
+                window,
+                "_build_embedded_socket",
+                return_value=replacement,
+                create=True,
+            ),
+            patch("ai_bar.app.Gtk.Window", return_value=detached),
+            patch("ai_bar.app.GLib.idle_add") as idle_add,
+        ):
+            window._detach_current_page()
+
+        replacement.add_id.assert_called_once_with(20)
+        self.assertIs(window.embedded[key], replacement)
+        self.assertIs(window.detached[key], detached)
+        window.terminal_notebook.remove.assert_called_once_with(source)
+        idle_add.assert_called_once_with(window._focus_embedded_window, replacement)
+
+    def test_reattaching_an_embedded_window_moves_its_xid_back_to_the_panel(self):
+        window = self._window()
+        source = Gtk.Socket()
+        replacement = Mock()
+        detached = Mock()
+        detached.get_child.return_value = source
+        detached.get_title.return_value = "Menu — ai-bar"
+        key = "window:menugui"
+        window.embedded = {key: source}
+        window.embedded_window_xids = {key: 20}
+        window.detached = {key: detached}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.append_page.return_value = 2
+        window.present = Mock()
+        window._refresh_launcher_states = Mock()
+
+        with (
+            patch.object(
+                window,
+                "_build_embedded_socket",
+                return_value=replacement,
+                create=True,
+            ),
+            patch("ai_bar.app.GLib.idle_add") as idle_add,
+        ):
+            window._reattach(key, detached)
+
+        replacement.add_id.assert_called_once_with(20)
+        self.assertIs(window.embedded[key], replacement)
+        self.assertNotIn(key, window.detached)
+        window.terminal_notebook.append_page.assert_called_once()
+        window.terminal_notebook.set_current_page.assert_called_once_with(2)
+        detached.remove.assert_called_once_with(source)
+        detached.destroy.assert_called_once_with()
+        idle_add.assert_called_once_with(window._focus_embedded_window, replacement)
 
     def test_the_page_key_is_found_among_both_kinds_of_tab(self):
         window = self._window()
@@ -1665,6 +2047,24 @@ class DetachTests(unittest.TestCase):
         detached.present.assert_called_once()
         window.terminal_notebook.set_current_page.assert_not_called()
         window.terminal_notebook.append_page.assert_not_called()
+
+    def test_clicking_a_detached_window_tool_raises_its_window(self):
+        window = self._window()
+        key = "window:menugui"
+        socket = Mock()
+        detached = Mock()
+        window.embedded = {key: socket}
+        window.embedded_window_xids = {key: 20}
+        window.detached = {key: detached}
+        window.terminal_notebook = Mock()
+        window.wnck_screen = Mock()
+
+        with patch("ai_bar.app.GLib.idle_add") as idle_add:
+            window._switch_embedded_window("menugui", "Menu")
+
+        detached.present.assert_called_once_with()
+        window.terminal_notebook.set_current_page.assert_not_called()
+        idle_add.assert_called_once_with(window._focus_embedded_window, socket)
 
     @patch("ai_bar.app.WebKit2")
     def test_clicking_a_detached_web_app_raises_its_window(self, _webkit2):
@@ -1701,9 +2101,13 @@ class DetachTests(unittest.TestCase):
         window = self._window()
         window.home_page = Gtk.Box()
         window.detach_button = Gtk.Button()
+        socket = Gtk.Socket()
+        stale_socket = Gtk.Socket()
+        window.embedded = {"window:menugui": socket}
+        window.embedded_window_xids = {"window:menugui": 20}
         notebook = Mock()
         notebook.get_current_page.return_value = 0
-        notebook.get_nth_page.return_value = Gtk.Socket()
+        notebook.get_nth_page.return_value = stale_socket
         window.terminal_notebook = notebook
 
         window._refresh_launcher_states(Gtk.Box())

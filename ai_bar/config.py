@@ -59,7 +59,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "icon": "camera-photo-symbolic",
                 "command": [
                     "/usr/bin/mate-screenshot",
-                    "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png",
+                    "--interactive",
                 ],
                 "icon_only": True,
             },
@@ -101,10 +101,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "columns": 4,
             "buttons": [
                 {
-                    "label": "menu",
+                    "label": "App",
                     "icon": "view-app-grid-symbolic",
-                    "command": ["menu"],
-                    "target": "terminal",
+                    "command": ["menugui"],
+                    "target": "window",
                 },
                 {
                     "label": "ZA",

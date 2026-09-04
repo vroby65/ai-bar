@@ -16,6 +16,8 @@ APT_PACKAGES=(
     gir1.2-xapp-1.0
     gir1.2-webkit2-4.1
     gir1.2-secret-1
+    gnome-keyring
+    libpam-gnome-keyring
     python3-xlib
     openbox
     policykit-1-gnome
@@ -23,6 +25,7 @@ APT_PACKAGES=(
     pulseaudio-utils
     pavucontrol
     network-manager
+    yad
 )
 
 if [ "$EUID" -eq 0 ]; then
@@ -53,6 +56,10 @@ if [ "${#missing_packages[@]}" -gt 0 ]; then
     sudo apt-get install -y "${missing_packages[@]}"
 fi
 
+echo "Abilitazione del keyring per LightDM..."
+systemctl --user unmask gnome-keyring-daemon.service gnome-keyring-daemon.socket
+systemctl --user enable gnome-keyring-daemon.socket
+
 echo "Installazione del comando ai-bar..."
 pipx install --editable --force --system-site-packages --python /usr/bin/python3 "$PROJECT_DIR"
 
@@ -63,7 +70,199 @@ fi
 
 mkdir -p "$CONFIG_DIR"
 if [ ! -f "$CONFIG_FILE" ]; then
-    "$AI_BAR_BIN" --print-default-config > "$CONFIG_FILE"
+    cat > "$CONFIG_FILE" <<'AI_BAR_CONFIG_EOF'
+{
+  "panel": {
+    "side": "left",
+    "width": 400,
+    "height": "screen",
+    "decorated": false,
+    "keep_above": true,
+    "resizable": true,
+    "reserve_space": true
+  },
+  "clock": {
+    "time_format": "%H:%M:%S",
+    "date_format": "%A %d %B %Y"
+  },
+  "tray": {
+    "xembed": true,
+    "icon_size": 16,
+    "status_refresh_seconds": 5,
+    "items": [
+      {
+        "type": "volume",
+        "label": "Volume",
+        "icon": "audio-volume-high-symbolic",
+        "command": ["pavucontrol", "-t", "2"]
+      },
+      {
+        "type": "display",
+        "label": "Display",
+        "icon": "preferences-desktop-display-symbolic",
+        "command": ["arandr"],
+        "icon_only": true
+      },
+      {
+        "type": "screenshot",
+        "label": "Screenshot",
+        "icon": "camera-photo-symbolic",
+        "command": ["/usr/bin/mate-screenshot", "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png"],
+        "icon_only": true
+      }
+    ]
+  },
+  "launcher_groups": [
+    {
+      "title": "",
+      "columns": 4,
+      "buttons": [
+        {
+          "label": "Terminale",
+          "icon": "utilities-terminal-symbolic",
+          "command": ["gnome-terminal"],
+          "maximized": true
+        },
+        {
+          "label": "Firefox",
+          "icon": "firefox",
+          "command": ["firefox"],
+          "maximized": true
+        },
+        {
+          "label": "Chrome",
+          "icon": "google-chrome",
+          "command": ["google-chrome"],
+          "maximized": true
+        },
+        {
+          "label": "caja",
+          "icon": "system-file-manager-symbolic",
+          "command": ["caja"],
+          "maximized": true
+        }
+      ]
+    },
+    {
+      "title": "Tools",
+      "columns": 4,
+      "buttons": [
+                {
+                    "label": "Menu",
+                    "icon": "view-app-grid-symbolic",
+                    "command": [
+                        "menugui"
+                    ],
+                    "target": "window"
+                },
+        {
+          "label": "or-codex",
+          "icon": "system-run-symbolic",
+          "command": ["or-codex"],
+          "target": "terminal"
+        },
+        {
+          "label": "ds-codex",
+          "icon": "accessories-text-editor-symbolic",
+          "command": ["ds-codex"],
+          "target": "terminal"
+        },
+        {
+          "label": "codex",
+          "icon": "openai",
+          "command": ["codex"],
+          "target": "terminal"
+        },
+        {
+          "label": "Calc",
+          "icon": "accessories-calculator-symbolic",
+          "command": ["gnome-calculator"],
+          "target": "window"
+        },
+        {
+          "label": "Meteo",
+          "icon": "weather-few-clouds-symbolic",
+          "url": "https://www.ilmeteo.it",
+          "target": "url"
+        },
+        {
+          "label": "VPN",
+          "icon": "proton-vpn-logo",
+          "command": ["/usr/bin/systemd-run", "--user", "--scope", "--collect", "--quiet", "/usr/bin/protonvpn-app"],
+          "target": "window"
+        },
+        {
+          "label": "terminal",
+          "icon": "utilities-terminal-symbolic",
+          "command": ["fish"],
+          "target": "terminal"
+        }
+      ]
+    }
+  ],
+  "quick_launchers": [
+    {
+      "label": "AnyDesk",
+      "icon": "anydesk",
+      "command": ["anydesk"]
+    },
+    {
+      "label": "TeamViewer",
+      "icon": "teamviewer",
+      "command": ["teamviewer"]
+    },
+    {
+      "label": "RustDesk",
+      "icon": "rustdesk",
+      "command": ["rustdesk"]
+    },
+    {
+      "label": "LocalSend",
+      "icon": "localsend_app",
+      "command": ["localsend_app"]
+    },
+    {
+      "label": "ChatGPT",
+      "icon": "openai",
+      "command": [
+        "google-chrome-stable",
+        "--app=http://chatgpt.com",
+        "--class=WebApp-chatGPT8307",
+        "--name=WebApp-chatGPT8307",
+        "--user-data-dir=/home/user/.local/share/ice/profiles/chatGPT8307"
+      ]
+    }
+  ],
+  "terminal": {
+    "command": ["hermes"],
+    "working_directory": null,
+    "font": "Monospace 10",
+    "scrollback_lines": 10000
+  },
+  "session_buttons": [
+    {
+      "label": "Reload",
+      "icon": "view-refresh-symbolic",
+      "action": "reload"
+    },
+    {
+      "label": "Logout",
+      "icon": "system-log-out-symbolic",
+      "command": ["openbox", "--exit"]
+    },
+    {
+      "label": "Reboot",
+      "icon": "system-reboot-symbolic",
+      "command": ["systemctl", "reboot"]
+    },
+    {
+      "label": "Powerdown",
+      "icon": "system-shutdown-symbolic",
+      "command": ["systemctl", "poweroff"]
+    }
+  ]
+}
+AI_BAR_CONFIG_EOF
     echo "Configurazione creata: $CONFIG_FILE"
 fi
 
@@ -89,6 +288,7 @@ fi
 echo "Installazione dei collegamenti dei comandi..."
 sudo ln -sfn -- "$AI_BAR_BIN" /usr/local/bin/ai-bar
 sudo ln -sfn -- "$PROJECT_DIR/scripts/ai-bar-openbox-session" /usr/local/bin/ai-bar-openbox-session
+sudo ln -sfn -- "$PROJECT_DIR/scripts/ai-bar-askpass" /usr/local/bin/ai-bar-askpass
 
 echo "Installazione della sessione AI Bar Openbox..."
 sudo install -Dm644 \

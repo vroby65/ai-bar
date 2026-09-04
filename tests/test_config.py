@@ -55,7 +55,12 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(all(button["maximized"] for button in config["launcher_groups"][0]["buttons"]))
         self.assertEqual(
             [button["label"] for button in config["launcher_groups"][1]["buttons"]],
-            ["menu", "ZA", "or-codex", "DS Code", "Codex", "Calc", "Meteo", "terminal"],
+            ["App", "ZA", "or-codex", "DS Code", "Codex", "Calc", "Meteo", "terminal"],
+        )
+        self.assertEqual(config["launcher_groups"][1]["buttons"][0]["target"], "window")
+        self.assertEqual(
+            config["launcher_groups"][1]["buttons"][0]["command"],
+            ["menugui"],
         )
         self.assertEqual(config["launcher_groups"][1]["buttons"][5]["target"], "window")
         self.assertEqual(config["launcher_groups"][1]["buttons"][6]["target"], "url")
@@ -65,6 +70,10 @@ class ConfigTests(unittest.TestCase):
             ["volume", "display", "screenshot"],
         )
         self.assertEqual(config["tray"]["items"][0]["command"], ["pavucontrol", "-t", "2"])
+        self.assertEqual(
+            config["tray"]["items"][2]["command"],
+            ["/usr/bin/mate-screenshot", "--interactive"],
+        )
         self.assertEqual(
             [button["label"] for button in config["session_buttons"]],
             ["Reload", "Logout", "Reboot", "Powerdown"],
