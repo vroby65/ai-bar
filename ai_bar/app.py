@@ -26,7 +26,7 @@ gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("GdkX11", "3.0")
 gi.require_version("Vte", "2.91")
 
-from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk, Pango, Vte
+from gi.repository import Gdk, GdkPixbuf, GdkX11, Gio, GLib, Gtk, Pango, Vte
 
 try:
     gi.require_version("Wnck", "3.0")
@@ -204,6 +204,9 @@ def application_ids_match(launcher_id: str, window_id: str) -> bool:
 
 
 def launcher_application_id(button_config: dict[str, Any]) -> str:
+    configured_id = button_config.get("app_id")
+    if isinstance(configured_id, str) and configured_id:
+        return application_id(configured_id)
     command = button_config.get("command")
     if isinstance(command, str):
         parts = shlex.split(command)
@@ -211,6 +214,28 @@ def launcher_application_id(button_config: dict[str, Any]) -> str:
     else:
         executable = command[0] if command else ""
     return application_id(str(executable))
+
+
+def pinned_window_command(app_id: str, pid: int) -> list[str]:
+    try:
+        process_executable = os.readlink(f"/proc/{pid}/exe")
+    except OSError:
+        process_executable = ""
+
+    process_id = application_id(process_executable) if process_executable else ""
+    for app_info in Gio.AppInfo.get_all():
+        desktop_id = app_info.get_id() or ""
+        executable_id = application_id(app_info.get_executable() or "")
+        if desktop_id and (
+            application_ids_match(desktop_id, app_id)
+            or application_ids_match(executable_id, app_id)
+            or (process_id and executable_id == process_id)
+        ):
+            return ["gtk-launch", desktop_id]
+
+    if process_executable:
+        return [process_executable]
+    return [app_id]
 
 
 def terminal_tab_label(command: str | list[str] | None) -> str:
@@ -390,6 +415,8 @@ class WindowInfo:
     active: bool
     icon: Any | None = None
     app_id: str = ""
+    pid: int = 0
+    app_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -1037,14 +1064,45 @@ class AiBarWindow(Gtk.Window):
             "Configura",
         )
 
-    def _build_window_button(self, info: WindowInfo) -> Gtk.Widget:
+    def _connect_window_cycle(
+        self, button: Gtk.Button, windows: list[WindowInfo]
+    ) -> None:
+        active_index = next(
+            (index for index, window in enumerate(windows) if window.active),
+            None,
+        )
+        next_index = (
+            len(windows) - 1
+            if active_index is None
+            else (active_index + 1) % len(windows)
+        )
+
+        def activate_next(_button: Gtk.Button) -> None:
+            nonlocal next_index
+            self._activate_window(windows[next_index].xid)
+            next_index = (next_index + 1) % len(windows)
+
+        button.connect("clicked", activate_next)
+
+    def _build_window_button(self, windows: list[WindowInfo]) -> Gtk.Widget:
+        info = next(
+            (window for window in reversed(windows) if window.active),
+            windows[-1],
+        )
         button = Gtk.Button()
         button.get_style_context().add_class("window-button")
         if info.active:
             button.get_style_context().add_class("active-window")
         button.set_tooltip_text(info.title)
         button.set_relief(Gtk.ReliefStyle.NONE)
-        button.connect("clicked", lambda _button: self._activate_window(info.xid))
+        self._connect_window_cycle(button, windows)
+        if info.app_id:
+            button.connect(
+                "button-press-event",
+                self._on_window_button_press,
+                info,
+                None,
+            )
 
         if info.icon is not None:
             icon = info.icon.scale_simple(
@@ -1072,13 +1130,7 @@ class AiBarWindow(Gtk.Window):
         button.set_relief(Gtk.ReliefStyle.NONE)
 
         if windows:
-            target = next(
-                (window for window in reversed(windows) if window.active),
-                windows[-1],
-            )
-            button.connect(
-                "clicked", lambda _button: self._activate_window(target.xid)
-            )
+            self._connect_window_cycle(button, windows)
         else:
             button.connect(
                 "clicked",
@@ -1087,6 +1139,12 @@ class AiBarWindow(Gtk.Window):
                     maximized=bool(button_config.get("maximized", False)),
                 ),
             )
+        button.connect(
+            "button-press-event",
+            self._on_window_button_press,
+            None,
+            button_config,
+        )
 
         icon_name = button_config.get("icon")
         if icon_name:
@@ -1139,16 +1197,104 @@ class AiBarWindow(Gtk.Window):
             key = window.app_id or f"window:{window.xid}"
             window_groups.setdefault(key, []).append(window)
         for group in window_groups.values():
-            representative = next(
-                (window for window in reversed(group) if window.active),
-                group[-1],
-            )
             child = self._add_flow_child(
-                self.window_flow, self._build_window_button(representative)
+                self.window_flow, self._build_window_button(group)
             )
             self.window_children.append(child)
 
         self.window_flow.show_all()
+
+    def _build_window_context_menu(
+        self,
+        info: WindowInfo | None = None,
+        button_config: dict[str, Any] | None = None,
+    ) -> Gtk.Menu:
+        menu = Gtk.Menu()
+        if button_config is not None:
+            launch_item = Gtk.MenuItem(label="Apri nuova istanza")
+            launch_item.connect(
+                "activate",
+                lambda _item: self._launch(
+                    button_config["command"],
+                    maximized=bool(button_config.get("maximized", False)),
+                ),
+            )
+            menu.append(launch_item)
+            item = Gtk.MenuItem(label="Rimuovi dalla barra")
+            item.connect("activate", lambda _item: self._unpin_launcher(button_config))
+        else:
+            item = Gtk.MenuItem(label="Mantieni nella barra")
+            item.connect("activate", lambda _item: self._pin_window(info))
+        menu.append(item)
+        return menu
+
+    def _on_window_button_press(
+        self,
+        _button: Gtk.Button,
+        event: Gdk.EventButton,
+        info: WindowInfo | None,
+        button_config: dict[str, Any] | None,
+    ) -> bool:
+        if event.button != 3:
+            return False
+        menu = self._build_window_context_menu(info, button_config)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def _save_current_config(self) -> bool:
+        path = self.config_path or default_config_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(self.config, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            print(f"ai-bar: impossibile salvare il pin: {exc}", file=sys.stderr)
+            return False
+        return True
+
+    def _pin_window(self, info: WindowInfo | None) -> None:
+        if info is None:
+            return
+        command = pinned_window_command(info.app_id, info.pid)
+        icon_name = info.app_id
+        if command[0] == "gtk-launch" and command[1].endswith(".desktop"):
+            icon_name = command[1][:-8]
+        button_config = {
+            "label": info.app_name or info.title,
+            "icon": icon_name,
+            "command": command,
+            "app_id": info.app_id,
+        }
+        groups = self.config.setdefault("launcher_groups", [])
+        created_group = not groups
+        if created_group:
+            groups.append({"title": "", "columns": 4, "buttons": []})
+        buttons = groups[0].setdefault("buttons", [])
+        buttons.append(button_config)
+        if not self._save_current_config():
+            buttons.pop()
+            if created_group:
+                groups.pop()
+            return
+        self.window_list_signature = ()
+        self._update_window_list()
+
+    def _unpin_launcher(self, button_config: dict[str, Any]) -> None:
+        for group in self.config.get("launcher_groups", []):
+            buttons = group.get("buttons", [])
+            for index, candidate in enumerate(buttons):
+                if candidate is not button_config:
+                    continue
+                buttons.pop(index)
+                if not self._save_current_config():
+                    buttons.insert(index, button_config)
+                    return
+                self.window_list_signature = ()
+                self._update_window_list()
+                return
 
     def _build_launcher_group(self, group: dict[str, Any]) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
@@ -1690,8 +1836,9 @@ class AiBarWindow(Gtk.Window):
                 title = clean_window_title(window.get_name() or "")
                 class_group = window.get_class_group()
                 class_id = class_group.get_id() if class_group is not None else None
+                class_name = window.get_class_group_name()
                 if not class_id:
-                    class_id = window.get_class_group_name()
+                    class_id = class_name
                 windows.append(
                     WindowInfo(
                         xid=xid,
@@ -1699,6 +1846,8 @@ class AiBarWindow(Gtk.Window):
                         active=window == active_window,
                         icon=window.get_mini_icon(),
                         app_id=application_id(class_id or ""),
+                        pid=int(window.get_pid()),
+                        app_name=clean_window_title(class_name or title),
                     )
                 )
         except Exception as exc:

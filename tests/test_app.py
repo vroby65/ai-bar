@@ -1,3 +1,4 @@
+import json
 import os
 import signal
 import tempfile
@@ -31,11 +32,13 @@ from ai_bar.app import (
     centered_position,
     panel_animation_step,
     panel_vertical_span,
+    pinned_window_command,
     place_window,
     panel_x_for_state,
     webkit_cookie_storage_path,
     launcher_page_key,
     favicon_cache_path,
+    launcher_application_id,
     same_origin,
     set_system_muted,
     set_system_volume,
@@ -391,7 +394,7 @@ class ClockLayoutTests(unittest.TestCase):
         window = AiBarWindow.__new__(AiBarWindow)
         icon = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 16, 16)
 
-        button = window._build_window_button(WindowInfo(1, "Firefox", False, icon))
+        button = window._build_window_button([WindowInfo(1, "Firefox", False, icon)])
 
         image = button.get_child()
         self.assertIsInstance(image, Gtk.Image)
@@ -405,7 +408,7 @@ class ClockLayoutTests(unittest.TestCase):
     def test_window_button_falls_back_to_the_generic_icon(self):
         window = AiBarWindow.__new__(AiBarWindow)
 
-        button = window._build_window_button(WindowInfo(1, "Finestra", False, None))
+        button = window._build_window_button([WindowInfo(1, "Finestra", False, None)])
 
         image = button.get_child()
         self.assertIsInstance(image, Gtk.Image)
@@ -462,15 +465,127 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertTrue(buttons[0].get_style_context().has_class("active-window"))
 
         buttons[0].emit("clicked")
+        buttons[0].emit("clicked")
         buttons[1].emit("clicked")
+        buttons[2].emit("clicked")
         buttons[2].emit("clicked")
 
         self.assertEqual(
             window._activate_window.call_args_list,
-            [unittest.mock.call(11), unittest.mock.call(21)],
+            [
+                unittest.mock.call(10),
+                unittest.mock.call(11),
+                unittest.mock.call(21),
+                unittest.mock.call(20),
+            ],
         )
         window._launch.assert_called_once_with(["gnome-terminal"], maximized=False)
         window.window_flow.destroy()
+
+    @patch(
+        "ai_bar.app.pinned_window_command",
+        return_value=["gtk-launch", "telegram.desktop"],
+    )
+    def test_window_can_be_pinned_from_its_context_menu(self, launch_command):
+        with tempfile.TemporaryDirectory() as directory:
+            window = AiBarWindow.__new__(AiBarWindow)
+            window.config_path = Path(directory) / "config.json"
+            window.config = {"launcher_groups": []}
+            window.window_list_signature = ((20, "Chat", "telegramdesktop", False),)
+            window._update_window_list = Mock()
+            info = WindowInfo(
+                20,
+                "Chat",
+                False,
+                None,
+                "telegramdesktop",
+                pid=123,
+                app_name="Telegram",
+            )
+
+            menu = window._build_window_context_menu(info=info)
+            item = menu.get_children()[0]
+            self.assertEqual(item.get_label(), "Mantieni nella barra")
+            item.emit("activate")
+
+            saved = json.loads(window.config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            saved["launcher_groups"][0]["buttons"],
+            [
+                {
+                    "label": "Telegram",
+                    "icon": "telegram",
+                    "command": ["gtk-launch", "telegram.desktop"],
+                    "app_id": "telegramdesktop",
+                }
+            ],
+        )
+        self.assertEqual(
+            launcher_application_id(saved["launcher_groups"][0]["buttons"][0]),
+            "telegramdesktop",
+        )
+        launch_command.assert_called_once_with("telegramdesktop", 123)
+        self.assertEqual(window.window_list_signature, ())
+        window._update_window_list.assert_called_once_with()
+        menu.destroy()
+
+    def test_pinned_launcher_can_be_removed_from_its_context_menu(self):
+        with tempfile.TemporaryDirectory() as directory:
+            button_config = {
+                "label": "Telegram",
+                "command": ["telegram-desktop"],
+                "app_id": "telegramdesktop",
+            }
+            window = AiBarWindow.__new__(AiBarWindow)
+            window.config_path = Path(directory) / "config.json"
+            window.config = {
+                "launcher_groups": [{"buttons": [button_config]}],
+            }
+            window.window_list_signature = ((20, "Chat", "telegramdesktop", False),)
+            window._update_window_list = Mock()
+
+            menu = window._build_window_context_menu(button_config=button_config)
+            item = menu.get_children()[1]
+            self.assertEqual(item.get_label(), "Rimuovi dalla barra")
+            item.emit("activate")
+
+            saved = json.loads(window.config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["launcher_groups"][0]["buttons"], [])
+        self.assertEqual(window.window_list_signature, ())
+        window._update_window_list.assert_called_once_with()
+        menu.destroy()
+
+    def test_pinned_launcher_context_menu_can_open_a_new_instance(self):
+        button_config = {
+            "label": "Firefox",
+            "command": ["firefox"],
+            "maximized": True,
+        }
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch = Mock()
+
+        menu = window._build_window_context_menu(button_config=button_config)
+        item = menu.get_children()[0]
+        self.assertEqual(item.get_label(), "Apri nuova istanza")
+        item.emit("activate")
+
+        window._launch.assert_called_once_with(["firefox"], maximized=True)
+        menu.destroy()
+
+    def test_pinned_window_command_prefers_a_matching_desktop_launcher(self):
+        firefox = Mock()
+        firefox.get_id.return_value = "firefox.desktop"
+        firefox.get_executable.return_value = "firefox"
+
+        with (
+            patch("ai_bar.app.os.readlink", return_value="/usr/lib/firefox/firefox"),
+            patch("ai_bar.app.Gio.AppInfo.get_all", return_value=[firefox]),
+        ):
+            command = pinned_window_command("firefox", 123)
+
+        self.assertEqual(command, ["gtk-launch", "firefox.desktop"])
 
     def test_terminal_launcher_matches_its_server_window(self):
         self.assertTrue(

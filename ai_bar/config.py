@@ -291,6 +291,13 @@ def validate_config(config: dict[str, Any]) -> None:
         if not isinstance(columns, int) or columns < 1:
             raise ConfigError("launcher_groups[].columns deve essere un intero positivo.")
         for button in group.get("buttons", []):
+            app_id = button.get("app_id")
+            if app_id is not None and (
+                not isinstance(app_id, str) or not app_id.strip()
+            ):
+                raise ConfigError(
+                    "launcher_groups[].buttons[].app_id deve essere una stringa non vuota."
+                )
             target = button.get("target")
             if target is not None and target not in {"terminal", "window", "url"}:
                 raise ConfigError(

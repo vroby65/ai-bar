@@ -53,7 +53,12 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
   stay pinned in the window dock and focus the application instead of creating a
   duplicate button when it is already open; a green border marks launchers with
   an open window, while the filled green state marks the active one; multiple
-  windows from an unpinned application share one button too
+  windows from an application share one button and repeated clicks cycle through
+  them; right-click an unpinned application and choose `Mantieni nella barra` to
+  save it as a launcher, or right-click a pinned one to open a new instance or
+  remove it
+- `launcher_groups[].buttons[].app_id`: stable application identifier saved
+  automatically when an open window is pinned
 - `launcher_groups[].buttons[].target`: where the button opens its content — all inside the panel:
   - `terminal` (default): runs the command in an embedded terminal tab
   - `window`: launches a GUI program and embeds its window in a tab of the terminal area (best effort, see below)

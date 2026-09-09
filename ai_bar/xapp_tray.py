@@ -14,7 +14,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 try:
     gi.require_version("XApp", "1.0")
     from gi.repository import XApp
-except (ImportError, ValueError):  # pragma: no cover - depends on the desktop packages.
+except Exception:  # pragma: no cover - depends on the desktop packages.
     XApp = None
 
 

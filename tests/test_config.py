@@ -183,6 +183,13 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_config(path)
 
+    def test_load_config_validates_launcher_app_id(self):
+        config = default_config()
+        config["launcher_groups"][0]["buttons"][0]["app_id"] = ""
+
+        with self.assertRaises(ConfigError):
+            validate_config(config)
+
     def test_load_config_accepts_window_and_url_targets(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
