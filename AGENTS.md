@@ -32,10 +32,11 @@ Keep every change small and traceable to the request:
 - `ai_bar/xapp_tray.py`: XApp indicator integration.
 - `ai_bar/xembed_tray.py`: XEmbed tray icon host for X11.
 - `ai_bar/__main__.py`: forwards execution to `ai_bar.app:main`.
-- `config.example.json`: user-facing example that must stay aligned with public
-  options in `DEFAULT_CONFIG`.
+- `config.example.json`: user-facing example whose loaded result must match
+  `DEFAULT_CONFIG`, as enforced by `tests/test_config.py`.
 - `install.sh`: Debian/Ubuntu/Mint dependencies, editable `pipx` installation, and
-  command links in `/usr/local/bin`.
+  command links in `/usr/local/bin`. Its JSON heredoc is the configuration profile
+  installed for a new user and is intentionally distinct from the runtime defaults.
 - `scripts/ai-bar-openbox-session`: coordinates `ai-bar` and Openbox startup,
   supervises and restarts the panel, and safely forwards reboot and power-off
   requests.
@@ -83,19 +84,38 @@ invoking `sudo -A` process; it must never persist or log it.
 
 ### Pages and launchers
 
-- `self.terminals`, `self.embedded`, `self.launcher_buttons`, and `self.detached`
-  represent the same logical identities from different viewpoints. Keep all maps in
-  sync when a page is added, replaced, detached, or removed.
+- `self.terminals`, `self.embedded`, `self.embedded_window_xids`,
+  `self.launcher_buttons`, and `self.detached` represent the same logical identities
+  from different viewpoints. Keep all maps in sync when a page is added, replaced,
+  detached, or removed.
 - Notebook tabs are hidden, so do not create pages without a way to reach them. If
   the last page is detached, the panel area remains empty.
-- Closing a detached window returns its page to the panel instead of ending the
-  session. A `Gtk.Socket`-based page cannot be detached.
+- Closing a detached window returns its logical page to the panel instead of ending
+  the session. A `Gtk.Socket` page is detachable only after its child XID is known;
+  detaching or reattaching it replaces the socket and reparents the same XID. Keep
+  `self.embedded`, `self.embedded_window_xids`, and `self.detached` synchronized,
+  and preserve rollback when `Gtk.Socket.add_id` fails.
 - Launcher targets have distinct semantics: no `target` launches an external
   program; `terminal` uses VTE; `window` attempts to embed an X11 window; `url` uses
   WebKit and falls back to the system browser when WebKit is unavailable.
 - Commands accept either a shell string or an argument list. Use
   `command_to_shell_line` and `terminal_argv` instead of rebuilding shell and quoting
   behavior elsewhere.
+
+### Visual styling
+
+- Keep application styling in `CSS` in `ai_bar/app.py`. Apply the shared accent
+  palette through `add_accent_color`; use stable indices and let the helper wrap
+  them instead of duplicating color classes or declarations.
+- Preserve the distinct window-dock signals: `pinned-window` on the
+  `Gtk.FlowBoxChild` supplies the yellow underline, `open-window` supplies the green
+  border, and `active-window` supplies the light outline. Styling a nested button
+  does not replace styling its flow-box child.
+- Page-action, quick-launcher, and tray-icon buttons are intentionally transparent.
+  Main controls use flat solid fills without theme gradients or shadows.
+- XEmbed clients do not inherit GTK CSS. When the `#ai-bar` background changes,
+  update `TRAY_BACKGROUND_RGB` in `ai_bar/xembed_tray.py`, the terminal background,
+  and their regression tests together.
 
 ### X11, monitors, and session actions
 
@@ -130,6 +150,8 @@ Update, in the order required by the test:
 
 Loading an older partial configuration must continue to work through defaults. A
 JSON list replaces the default list; its elements are not merged individually.
+Change the JSON heredoc in `install.sh` only when the requested installed profile
+also changes, and cover that separately in `tests/test_packaging.py`.
 
 ### Change the panel interface or behavior
 
@@ -139,8 +161,9 @@ signals, and destroy the widgets afterward. Preserve existing CSS classes and st
 unless the request explicitly concerns appearance.
 
 For terminals, web views, or embedded windows, add tests for the page key, notebook
-selection, and state maps. A test that covers only the button click does not cover
-the full lifecycle.
+selection, and state maps. Embedded-window tests must also cover the XID, focus, and
+detach/reattach/reload transitions. A test that covers only the button click does
+not cover the full lifecycle.
 
 ### Change tray or desktop integrations
 

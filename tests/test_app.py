@@ -55,11 +55,28 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 
 
 class ClockLayoutTests(unittest.TestCase):
-    def test_app_tray_icons_have_no_background_or_border(self):
+    def test_panel_and_buttons_use_flat_surfaces(self):
+        panel_css = CSS.split("#ai-bar {", 1)[1].split("}", 1)[0]
+        button_css = CSS.split("button {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("background: #2b2f32;", panel_css)
+        self.assertNotIn("linear-gradient", CSS)
+        self.assertIn("background-image: none;", button_css)
+        self.assertIn("box-shadow: none;", button_css)
+
+    def test_page_actions_quick_launchers_and_tray_icons_are_transparent(self):
+        page_action_css = CSS.split("button.page-action-button {", 1)[1].split(
+            "}", 1
+        )[0]
+        quick_launcher_css = CSS.split("button.quick-launcher-button {", 1)[1].split(
+            "}", 1
+        )[0]
         tray_css = CSS.split(".tray-icon-cell {", 1)[1].split("}", 1)[0]
 
-        self.assertIn("background: transparent;", tray_css)
-        self.assertIn("border: 0;", tray_css)
+        for transparent_css in (page_action_css, quick_launcher_css, tray_css):
+            self.assertIn("background-color: transparent;", transparent_css)
+            self.assertIn("border: 0;", transparent_css)
+            self.assertIn("box-shadow: none;", transparent_css)
 
     def test_tray_window_separator_is_light_gray(self):
         separator_css = CSS.split(".tray-window-separator {", 1)[1].split("}", 1)[0]
@@ -73,15 +90,54 @@ class ClockLayoutTests(unittest.TestCase):
 
         self.assertIn("border-color: #63b68e;", open_window_css)
 
+    def test_window_dock_marks_pinned_and_active_buttons_differently(self):
+        pinned_css = CSS.split(".window-flow flowboxchild.pinned-window {", 1)[1].split(
+            "}", 1
+        )[0]
+        active_css = CSS.split("button.window-button.active-window,", 1)[1].split(
+            "}", 1
+        )[0]
+
+        self.assertIn("border-bottom: 2px solid #ffea00;", pinned_css)
+        self.assertIn("padding-bottom: 3px;", pinned_css)
+        self.assertIn("border-color: #f2f2ee;", active_css)
+        self.assertIn("border-width: 2px;", active_css)
+
     def test_tool_buttons_are_compact(self):
         launcher_css = CSS.split("button.launcher-button {", 1)[1].split("}", 1)[0]
 
         self.assertIn("min-height: 48px;", launcher_css)
 
+    def test_launcher_buttons_cycle_through_distinct_flat_colors(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.launcher_buttons = {}
+        window._switch_terminal = Mock()
+        group = window._build_launcher_group(
+            {
+                "title": "Tools",
+                "buttons": [
+                    {"label": "One", "command": ["one"], "target": "terminal"},
+                    {"label": "Two", "command": ["two"], "target": "terminal"},
+                    {"label": "Three", "command": ["three"], "target": "terminal"},
+                ],
+            }
+        )
+
+        flow = group.get_children()[-1]
+        buttons = [child.get_child() for child in flow.get_children()]
+
+        for button, color_class in zip(
+            buttons,
+            ("accent-blue", "accent-orange", "accent-green"),
+        ):
+            self.assertTrue(button.get_style_context().has_class(color_class))
+
+        group.destroy()
+
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_tray_row_places_assistant_before_volume_and_separates_windows(
+    def test_display_and_screenshot_stay_with_volume_and_separate_from_tray(
         self,
         _xapp_host,
         _xembed_host,
@@ -91,9 +147,21 @@ class ClockLayoutTests(unittest.TestCase):
         window.config = {
             "panel": {"side": "left"},
             "tray": {
-                "items": [{"type": "volume"}],
+                "items": [
+                    {"type": "volume"},
+                    {
+                        "type": "display",
+                        "label": "Display",
+                        "icon": "preferences-desktop-display-symbolic",
+                    },
+                    {
+                        "type": "screenshot",
+                        "label": "Screenshot",
+                        "icon": "camera-photo-symbolic",
+                    },
+                ],
                 "icon_size": 24,
-                "xembed": False,
+                "xembed": True,
                 "status_refresh_seconds": 5,
             },
         }
@@ -108,7 +176,7 @@ class ClockLayoutTests(unittest.TestCase):
         status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
-        assistant_button, volume_control = [
+        assistant_button, volume_control, display_button, screenshot_button = [
             child.get_child() for child in status_flow.get_children()
         ]
         tray_row = status_area.get_children()[1]
@@ -117,6 +185,8 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertNotIn(assistant_button, volume_control.get_children())
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
+        self.assertEqual(display_button.get_tooltip_text(), "Display")
+        self.assertEqual(screenshot_button.get_tooltip_text(), "Screenshot")
         self.assertEqual(
             macro_recorder_button.get_tooltip_text(), "Avvia Macro Recorder"
         )
@@ -128,9 +198,13 @@ class ClockLayoutTests(unittest.TestCase):
             spiral_button.get_tooltip_text(), "Affianca le finestre a chiocciola"
         )
         self.assertIsInstance(tray_flow, Gtk.FlowBox)
-        self.assertEqual(
-            tray_row.query_child_packing(spiral_button)[3], Gtk.PackType.END
+        self.assertTrue(tray_row.get_style_context().has_class("tray-row"))
+        self.assertNotIn(
+            display_button,
+            [child.get_child() for child in tray_flow.get_children()],
         )
+        _xapp_host.assert_called_once_with(tray_flow, 24, "left")
+        _xembed_host.assert_called_once_with(tray_flow, 24)
         self.assertEqual(window.window_flow.get_max_children_per_line(), 20)
         separator = status_area.get_children()[2]
         self.assertIsInstance(separator, Gtk.Separator)
@@ -455,7 +529,8 @@ class ClockLayoutTests(unittest.TestCase):
             ]
         )
 
-        buttons = [child.get_child() for child in window.window_flow.get_children()]
+        children = window.window_flow.get_children()
+        buttons = [child.get_child() for child in children]
         self.assertEqual(
             [button.get_tooltip_text() for button in buttons],
             ["Firefox", "Terminale", "Telegram chat"],
@@ -463,6 +538,12 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertTrue(buttons[0].get_style_context().has_class("open-window"))
         self.assertFalse(buttons[1].get_style_context().has_class("open-window"))
         self.assertTrue(buttons[0].get_style_context().has_class("active-window"))
+        self.assertTrue(buttons[0].get_style_context().has_class("pinned-window"))
+        self.assertTrue(buttons[1].get_style_context().has_class("pinned-window"))
+        self.assertFalse(buttons[2].get_style_context().has_class("pinned-window"))
+        self.assertTrue(children[0].get_style_context().has_class("pinned-window"))
+        self.assertTrue(children[1].get_style_context().has_class("pinned-window"))
+        self.assertFalse(children[2].get_style_context().has_class("pinned-window"))
 
         buttons[0].emit("clicked")
         buttons[0].emit("clicked")
@@ -1301,7 +1382,7 @@ class ClockLayoutTests(unittest.TestCase):
         terminal.paste_clipboard.assert_called_once_with()
 
     @patch("ai_bar.app.Vte.Terminal")
-    def test_terminal_uses_readable_blue_palette(self, terminal_class):
+    def test_terminal_uses_gray_background_and_readable_blue_palette(self, terminal_class):
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = {
             "terminal": {
@@ -1316,7 +1397,7 @@ class ClockLayoutTests(unittest.TestCase):
 
         foreground, background, palette = terminal_class.return_value.set_colors.call_args.args
         self.assertEqual(foreground.to_string(), "rgb(242,242,238)")
-        self.assertEqual(background.to_string(), "rgb(21,24,25)")
+        self.assertEqual(background.to_string(), "rgb(43,47,50)")
         self.assertEqual(palette[4].to_string(), "rgb(108,182,255)")
         self.assertEqual(palette[12].to_string(), "rgb(165,214,255)")
 
@@ -1880,6 +1961,17 @@ class DetachTests(unittest.TestCase):
             child for child in bar.get_children()
             if child.get_tooltip_text() == "Ricarica il tool corrente"
         )
+        detach_button = next(
+            child for child in bar.get_children()
+            if child.get_tooltip_text()
+            == "Stacca in una finestra sul monitor principale"
+        )
+        self.assertTrue(
+            reload_button.get_style_context().has_class("page-action-button")
+        )
+        self.assertTrue(
+            detach_button.get_style_context().has_class("page-action-button")
+        )
         reload_button.emit("clicked")
 
         window._reload_current_page.assert_called_once_with()
@@ -1979,6 +2071,12 @@ class DetachTests(unittest.TestCase):
         reattach_button = next(
             child for child in detached.get_titlebar().get_children()
             if child.get_tooltip_text() == "Riattacca al pannello"
+        )
+        self.assertTrue(
+            reload_button.get_style_context().has_class("page-action-button")
+        )
+        self.assertTrue(
+            reattach_button.get_style_context().has_class("page-action-button")
         )
         self.assertGreater(reload_button.get_child().get_pixel_size(), 0)
         self.assertEqual(

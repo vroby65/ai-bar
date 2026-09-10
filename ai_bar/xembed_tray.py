@@ -14,7 +14,7 @@ except Exception:  # pragma: no cover - exercised only on systems without python
 
 
 SYSTEM_TRAY_REQUEST_DOCK = 0
-TRAY_BACKGROUND_RGB = (0x15 * 257, 0x18 * 257, 0x19 * 257)
+TRAY_BACKGROUND_RGB = (0x2B * 257, 0x2F * 257, 0x32 * 257)
 TRAY_COLOR_VALUES = [
     0xF2 * 257,
     0xF2 * 257,

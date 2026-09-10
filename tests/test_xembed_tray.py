@@ -34,7 +34,7 @@ class XEmbedTrayHostTests(unittest.TestCase):
     def test_icon_background_matches_panel(self):
         self.assertEqual(
             TRAY_BACKGROUND_RGB,
-            (0x15 * 257, 0x18 * 257, 0x19 * 257),
+            (0x2B * 257, 0x2F * 257, 0x32 * 257),
         )
 
     def test_default_icons_are_compact(self):
@@ -55,7 +55,6 @@ class XEmbedTrayHostTests(unittest.TestCase):
         self.assertEqual(host.sockets, {})
         self.assertEqual(host.flow_children, {})
         window.destroy()
-
 
 if __name__ == "__main__":
     unittest.main()

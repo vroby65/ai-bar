@@ -2,6 +2,10 @@
 
 A GTK side panel similar to a desktop bar, with the date and time at the top, a tray/status area with a window list, two configurable launcher groups, and an embedded terminal at the bottom.
 
+The default theme uses a flat graphite surface with solid accent colors for the
+main controls. Launcher and window buttons cycle through the accent palette,
+while page actions, quick launchers, and tray icons remain transparent.
+
 ## Installation
 
 ```bash
@@ -26,6 +30,7 @@ After installation:
 ```bash
 ai-bar
 ai-bar --config ~/.config/ai-bar/config.json
+ai-bar --print-default-config
 ```
 
 To run it directly from the checkout during development:
@@ -38,7 +43,9 @@ The editable installation loads Python code directly from this checkout. After a
 
 ## Configuration
 
-The default file is `~/.config/ai-bar/config.json`. You can start with `config.example.json` and customize:
+The default file is `$XDG_CONFIG_HOME/ai-bar/config.json`, falling back to
+`~/.config/ai-bar/config.json` when `XDG_CONFIG_HOME` is unset. You can start
+with `config.example.json` and customize:
 
 - `panel.side`: `left` or `right`
 - `panel.width`: panel width, default `400`
@@ -51,16 +58,18 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `tray.items[].icon_only`: `true` shows only the icon for that item, without the text label
 - `launcher_groups`: groups of buttons, icons, and commands; external launchers
   stay pinned in the window dock and focus the application instead of creating a
-  duplicate button when it is already open; a green border marks launchers with
-  an open window, while the filled green state marks the active one; multiple
-  windows from an application share one button and repeated clicks cycle through
-  them; right-click an unpinned application and choose `Mantieni nella barra` to
-  save it as a launcher, or right-click a pinned one to open a new instance or
-  remove it
+  duplicate button when it is already open; a yellow underline marks pinned
+  launchers, a green border marks launchers with an open window, and a light
+  outline marks the active window; multiple windows from an application share one
+  button and repeated clicks cycle through them; right-click an unpinned
+  application and choose `Mantieni nella barra` to save it as a launcher, or
+  right-click a pinned one to open a new instance or remove it
 - `launcher_groups[].buttons[].app_id`: stable application identifier saved
   automatically when an open window is pinned
-- `launcher_groups[].buttons[].target`: where the button opens its content — all inside the panel:
-  - `terminal` (default): runs the command in an embedded terminal tab
+- `launcher_groups[].buttons[].target`: where the button opens its content;
+  omit it to launch an external application, or set one of these values for
+  content inside the panel:
+  - `terminal`: runs the command in an embedded terminal tab
   - `window`: launches a GUI program and embeds its window in a tab of the terminal area (best effort, see below)
   - `url`: opens a web app by URL in an embedded WebKit tab (requires WebKit2; falls back to the system browser with `xdg-open` if it is missing)
 - `launcher_groups[].buttons[].url`: the URL for `target: "url"` buttons
@@ -83,7 +92,7 @@ AI Bar exports `SUDO_ASKPASS=/usr/local/bin/ai-bar-askpass` to its embedded term
 
 A tab can be detached into a window of its own with the button above the content, for when something started in the panel turns into real work. Nothing is restarted: the terminal keeps its process and the page keeps its state, typed text included. Pressing the detach button in the separate window puts the tab back in the panel; closing that window does the same rather than ending the tool. The reload button next to it restarts the current terminal or embedded GUI tool, or reloads the current web app. The panel falls back to the first tab that is left, or to an empty area if that was the only one, and while a tool is detached its launcher button is outlined and clicking it raises the window.
 
-No replacement tab is created to fill the gap. Tab labels are hidden, so a tab that no launcher button owns could never be reached again and its process would keep running out of sight. Embedded GUI windows are the one thing that cannot be detached: they have a window of their own already, and detaching one would mean dismantling the embedding.
+No replacement tab is created to fill the gap. Tab labels are hidden, so a tab that no launcher button owns could never be reached again and its process would keep running out of sight. An embedded GUI window can be detached after ai-bar has captured and embedded its X11 window; until then, the detach button remains disabled. Detaching or reattaching it creates a new `Gtk.Socket` and reparents the same window by XID, without relaunching the process.
 
 Web app buttons take their icon from the site's favicon once the site has been opened, and fall back to the configured `icon` when the site has none. Icons that WebKit cannot decode itself — SVG favicons, for instance — are fetched from the site and decoded with GdkPixbuf, then cached under `ai-bar/webkit/icons` so the button keeps the icon across restarts.
 
@@ -104,4 +113,11 @@ The session is installed by `install.sh`. Log out of the graphical session, sele
 ```bash
 python3 -m unittest discover -s tests
 python3 -m compileall ai_bar tests
+git diff --check
+```
+
+Without a graphical display, run the suite through Xvfb:
+
+```bash
+xvfb-run -a python3 -m unittest discover -s tests
 ```

@@ -80,7 +80,7 @@ FAVICON_TIMEOUT_SECONDS = 5
 FAVICON_MAX_BYTES = 1 << 20
 ASKPASS_PATH = "/usr/local/bin/ai-bar-askpass"
 TERMINAL_FOREGROUND = "#f2f2ee"
-TERMINAL_BACKGROUND = "#151819"
+TERMINAL_BACKGROUND = "#2b2f32"
 TERMINAL_PALETTE = (
     "#3b4042",
     "#ff6b6b",
@@ -543,9 +543,27 @@ class X11SuperToggle:
         return False
 
 
+ACCENT_COLOR_CLASSES = (
+    "accent-blue",
+    "accent-orange",
+    "accent-green",
+    "accent-violet",
+    "accent-yellow",
+    "accent-teal",
+    "accent-pink",
+    "accent-red",
+)
+
+
+def add_accent_color(widget: Gtk.Widget, index: int) -> None:
+    widget.get_style_context().add_class(
+        ACCENT_COLOR_CLASSES[index % len(ACCENT_COLOR_CLASSES)]
+    )
+
+
 CSS = """
 #ai-bar {
-  background: #151819;
+  background: #2b2f32;
   color: #f2f2ee;
 }
 
@@ -566,37 +584,75 @@ CSS = """
   margin-top: 2px;
 }
 
-button.status-button,
-button.window-button,
-button.launcher-button,
-button.session-button {
-  background: #242829;
-  border: 1px solid #303638;
-  border-radius: 6px;
-  color: #f2f2ee;
+button {
+  background-color: #45a9e6;
+  background-image: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  box-shadow: none;
+  color: #17191a;
   padding: 6px;
 }
 
-button.status-button:hover,
-button.window-button:hover,
-button.launcher-button:hover,
-button.session-button:hover {
-  background: #2d3335;
-  border-color: #4c8f72;
+button:hover {
+  border-color: rgba(255, 255, 255, 0.48);
 }
 
-button.window-button.active-window {
-  background: #314238;
-  border-color: #63b68e;
+button:active,
+button:checked {
+  border-color: rgba(0, 0, 0, 0.42);
+  box-shadow: none;
+}
+
+button.accent-blue {
+  background-color: #45a9e6;
+}
+
+button.accent-orange {
+  background-color: #f58a43;
+}
+
+button.accent-green {
+  background-color: #55c878;
+}
+
+button.accent-violet {
+  background-color: #9a72df;
+}
+
+button.accent-yellow {
+  background-color: #e7c84c;
+}
+
+button.accent-teal {
+  background-color: #36c3b0;
+}
+
+button.accent-pink {
+  background-color: #e96aa7;
+}
+
+button.accent-red {
+  background-color: #e75d62;
+}
+
+button.launcher-button {
+  min-height: 48px;
 }
 
 button.window-button.open-window {
   border-color: #63b68e;
 }
 
+button.window-button.active-window,
 button.launcher-button.active-launcher {
-  background: #314238;
-  border-color: #63b68e;
+  border-color: #f2f2ee;
+  border-width: 2px;
+}
+
+.window-flow flowboxchild.pinned-window {
+  border-bottom: 2px solid #ffea00;
+  padding-bottom: 3px;
 }
 
 button.launcher-button.detached-launcher {
@@ -619,34 +675,53 @@ button.status-button {
 }
 
 .volume-control {
-  background: #242829;
-  border: 1px solid #303638;
-  border-radius: 6px;
+  background-color: #36c3b0;
+  background-image: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  box-shadow: none;
+  color: #17191a;
   padding: 3px 5px;
 }
 
 button.volume-mute-button,
 button.volume-settings-button {
-  background: transparent;
-  border: 0;
   border-radius: 4px;
   padding: 3px;
 }
 
-button.volume-mute-button:hover,
-button.volume-settings-button:hover {
-  background: #2d3335;
+button.page-action-button {
+  background-color: transparent;
+  background-image: none;
+  border: 0;
+  box-shadow: none;
+  color: #f2f2ee;
+  padding: 3px;
+}
+
+button.page-action-button:hover,
+button.page-action-button:active,
+button.page-action-button:checked {
+  background-color: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 button.quick-launcher-button {
-  background: transparent;
+  background-color: transparent;
+  background-image: none;
   border: 0;
-  border-radius: 4px;
+  box-shadow: none;
+  color: #f2f2ee;
   padding: 3px;
 }
 
-button.quick-launcher-button:hover {
-  background: #2d3335;
+button.quick-launcher-button:hover,
+button.quick-launcher-button:active,
+button.quick-launcher-button:checked {
+  background-color: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 scale.volume-slider {
@@ -655,10 +730,6 @@ scale.volume-slider {
 
 .volume-percent {
   min-width: 38px;
-}
-
-button.launcher-button {
-  min-height: 48px;
 }
 
 button.launcher-button.icon-only-launcher {
@@ -673,6 +744,12 @@ button.launcher-button.icon-only-launcher {
   margin-bottom: 0;
 }
 
+.tray-row {
+  border-top: 1px solid #4a5054;
+  margin-top: 3px;
+  padding-top: 7px;
+}
+
 .tray-window-separator {
   background-color: #c0c0c0;
 }
@@ -682,12 +759,22 @@ button.launcher-button.icon-only-launcher {
 }
 
 .tray-icon-cell {
-  background: transparent;
+  background-color: transparent;
+  background-image: none;
   border: 0;
-  border-radius: 6px;
+  box-shadow: none;
+  color: #f2f2ee;
   min-height: 24px;
   min-width: 24px;
   padding: 2px;
+}
+
+button.tray-icon-cell:hover,
+button.tray-icon-cell:active,
+button.tray-icon-cell:checked {
+  background-color: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .terminal-wrap {
@@ -696,7 +783,7 @@ button.launcher-button.icon-only-launcher {
 }
 
 .resize-handle {
-  background: #252a2c;
+  background: #3a3f42;
   min-width: 6px;
 }
 
@@ -900,6 +987,7 @@ class AiBarWindow(Gtk.Window):
             self.tray_host = XEmbedTrayHost(tray_flow, icon_size)
 
         tray_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tray_row.get_style_context().add_class("tray-row")
         tray_row.pack_start(tray_flow, True, True, 0)
         tray_row.pack_end(self._build_spiral_tile_button(), False, False, 0)
         tray_row.pack_end(self._build_macro_recorder_button(), False, False, 0)
@@ -940,6 +1028,12 @@ class AiBarWindow(Gtk.Window):
 
         button = Gtk.Button()
         button.get_style_context().add_class("status-button")
+        color_index = {
+            "display": 5,
+            "screenshot": 1,
+            "wifi": 2,
+        }.get(str(item.get("type", "")), 4)
+        add_accent_color(button, color_index)
         button.set_tooltip_text(str(item.get("label", "")))
         button.set_relief(Gtk.ReliefStyle.NONE)
 
@@ -976,6 +1070,7 @@ class AiBarWindow(Gtk.Window):
 
         mute_button = Gtk.Button()
         mute_button.get_style_context().add_class("volume-mute-button")
+        add_accent_color(mute_button, 2)
         mute_button.set_relief(Gtk.ReliefStyle.NONE)
         mute_button.set_tooltip_text("Attiva o disattiva l'audio")
         mute_button.connect("clicked", self._on_volume_mute_clicked)
@@ -1000,6 +1095,7 @@ class AiBarWindow(Gtk.Window):
         if command:
             settings_button = Gtk.Button()
             settings_button.get_style_context().add_class("volume-settings-button")
+            add_accent_color(settings_button, 1)
             settings_button.set_relief(Gtk.ReliefStyle.NONE)
             settings_button.set_tooltip_text("Impostazioni audio")
             settings_button.add(
@@ -1014,6 +1110,7 @@ class AiBarWindow(Gtk.Window):
     def _build_configuration_assistant_button(self) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("status-button")
+        add_accent_color(button, 3)
         button.set_relief(Gtk.ReliefStyle.NONE)
         button.set_tooltip_text("Configura AI-bar con un agente")
         button.add(Gtk.Image.new_from_icon_name("document-edit-symbolic", Gtk.IconSize.MENU))
@@ -1084,13 +1181,16 @@ class AiBarWindow(Gtk.Window):
 
         button.connect("clicked", activate_next)
 
-    def _build_window_button(self, windows: list[WindowInfo]) -> Gtk.Widget:
+    def _build_window_button(
+        self, windows: list[WindowInfo], color_index: int = 0
+    ) -> Gtk.Widget:
         info = next(
             (window for window in reversed(windows) if window.active),
             windows[-1],
         )
         button = Gtk.Button()
         button.get_style_context().add_class("window-button")
+        add_accent_color(button, color_index)
         if info.active:
             button.get_style_context().add_class("active-window")
         button.set_tooltip_text(info.title)
@@ -1118,10 +1218,15 @@ class AiBarWindow(Gtk.Window):
         return button
 
     def _build_pinned_launcher_button(
-        self, button_config: dict[str, Any], windows: list[WindowInfo]
+        self,
+        button_config: dict[str, Any],
+        windows: list[WindowInfo],
+        color_index: int = 0,
     ) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("window-button")
+        button.get_style_context().add_class("pinned-window")
+        add_accent_color(button, color_index)
         if windows:
             button.get_style_context().add_class("open-window")
         if any(window.active for window in windows):
@@ -1173,6 +1278,7 @@ class AiBarWindow(Gtk.Window):
         self.window_children.clear()
 
         remaining = list(windows)
+        color_index = 0
         for group in self.config.get("launcher_groups", []):
             for button_config in group.get("buttons", []):
                 if button_config.get("target") is not None:
@@ -1188,9 +1294,13 @@ class AiBarWindow(Gtk.Window):
                 ]
                 child = self._add_flow_child(
                     self.window_flow,
-                    self._build_pinned_launcher_button(button_config, matches),
+                    self._build_pinned_launcher_button(
+                        button_config, matches, color_index
+                    ),
                 )
+                child.get_style_context().add_class("pinned-window")
                 self.window_children.append(child)
+                color_index += 1
 
         window_groups: dict[str, list[WindowInfo]] = {}
         for window in remaining:
@@ -1198,9 +1308,10 @@ class AiBarWindow(Gtk.Window):
             window_groups.setdefault(key, []).append(window)
         for group in window_groups.values():
             child = self._add_flow_child(
-                self.window_flow, self._build_window_button(group)
+                self.window_flow, self._build_window_button(group, color_index)
             )
             self.window_children.append(child)
+            color_index += 1
 
         self.window_flow.show_all()
 
@@ -1314,18 +1425,26 @@ class AiBarWindow(Gtk.Window):
         flow.set_min_children_per_line(1)
         flow.set_max_children_per_line(max(1, len(buttons)))
 
-        for button_config in buttons:
-            button = self._build_launcher_button(button_config, show_label=bool(title))
+        for color_index, button_config in enumerate(buttons):
+            button = self._build_launcher_button(
+                button_config,
+                show_label=bool(title),
+                color_index=color_index,
+            )
             self._add_flow_child(flow, button)
 
         box.pack_start(flow, False, False, 0)
         return box
 
     def _build_launcher_button(
-        self, button_config: dict[str, Any], show_label: bool = True
+        self,
+        button_config: dict[str, Any],
+        show_label: bool = True,
+        color_index: int = 0,
     ) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("launcher-button")
+        add_accent_color(button, color_index)
         if not show_label:
             button.get_style_context().add_class("icon-only-launcher")
         button.set_relief(Gtk.ReliefStyle.NONE)
@@ -1398,14 +1517,26 @@ class AiBarWindow(Gtk.Window):
         row.get_style_context().add_class("session-row")
         row.set_homogeneous(True)
 
-        for button_config in self.config.get("session_buttons", []):
-            row.pack_start(self._build_session_button(button_config), True, True, 0)
+        color_indices = (0, 4, 1, 7)
+        for index, button_config in enumerate(self.config.get("session_buttons", [])):
+            row.pack_start(
+                self._build_session_button(
+                    button_config,
+                    color_index=color_indices[index % len(color_indices)],
+                ),
+                True,
+                True,
+                0,
+            )
 
         return row
 
-    def _build_session_button(self, button_config: dict[str, Any]) -> Gtk.Widget:
+    def _build_session_button(
+        self, button_config: dict[str, Any], color_index: int = 0
+    ) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("session-button")
+        add_accent_color(button, color_index)
         button.set_relief(Gtk.ReliefStyle.NONE)
         button.set_tooltip_text(str(button_config.get("label", "")))
         if button_config.get("action") == "reload":
@@ -2302,6 +2433,7 @@ class AiBarWindow(Gtk.Window):
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         bar.get_style_context().add_class("detach-bar")
         reload_button = Gtk.Button()
+        reload_button.get_style_context().add_class("page-action-button")
         reload_button.set_relief(Gtk.ReliefStyle.NONE)
         reload_button.set_tooltip_text("Ricarica il tool corrente")
         reload_icon = Gtk.Image.new_from_icon_name(
@@ -2313,6 +2445,7 @@ class AiBarWindow(Gtk.Window):
 
         detach_button = Gtk.Button()
         detach_button.get_style_context().add_class("detach-button")
+        detach_button.get_style_context().add_class("page-action-button")
         detach_button.set_relief(Gtk.ReliefStyle.NONE)
         detach_button.set_tooltip_text("Stacca in una finestra sul monitor principale")
         detach_icon = Gtk.Image.new_from_icon_name(
@@ -2390,6 +2523,7 @@ class AiBarWindow(Gtk.Window):
         header = Gtk.HeaderBar(title=title)
         header.set_show_close_button(True)
         reload_button = Gtk.Button()
+        reload_button.get_style_context().add_class("page-action-button")
         reload_button.set_tooltip_text("Ricarica il tool corrente")
         reload_icon = Gtk.Image.new_from_icon_name(
             "view-refresh-symbolic", Gtk.IconSize.MENU)
@@ -2398,6 +2532,7 @@ class AiBarWindow(Gtk.Window):
         reload_button.connect(
             "clicked", lambda _button: self._reload_page(window.get_child()))
         reattach_button = Gtk.Button()
+        reattach_button.get_style_context().add_class("page-action-button")
         reattach_button.set_tooltip_text("Riattacca al pannello")
         reattach_icon = Gtk.Image.new_from_icon_name(
             "window-new-symbolic", Gtk.IconSize.MENU)
