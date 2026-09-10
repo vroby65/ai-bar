@@ -561,6 +561,95 @@ def add_accent_color(widget: Gtk.Widget, index: int) -> None:
     )
 
 
+class NaturalWrapBox(Gtk.Fixed):
+    __gtype_name__ = "AiBarNaturalWrapBox"
+
+    def __init__(self, spacing: int = 0) -> None:
+        super().__init__()
+        self.spacing = spacing
+
+    def do_get_request_mode(self) -> Gtk.SizeRequestMode:
+        return Gtk.SizeRequestMode.HEIGHT_FOR_WIDTH
+
+    def do_get_preferred_width(self) -> tuple[int, int]:
+        widths = [
+            child.get_preferred_width()
+            for child in self.get_children()
+            if child.get_visible()
+        ]
+        if not widths:
+            return 0, 0
+        minimum = max(width[0] for width in widths)
+        natural = sum(width[1] for width in widths) + self.spacing * (
+            len(widths) - 1
+        )
+        return minimum, natural
+
+    def _rows(self, width: int) -> list[list[tuple[Gtk.Widget, int]]]:
+        available = max(1, width)
+        rows: list[list[tuple[Gtk.Widget, int]]] = []
+        row: list[tuple[Gtk.Widget, int]] = []
+        row_width = 0
+        for child in self.get_children():
+            if not child.get_visible():
+                continue
+            _minimum, natural = child.get_preferred_width()
+            child_width = min(natural, available)
+            required = (
+                child_width if not row else row_width + self.spacing + child_width
+            )
+            if row and required > available:
+                rows.append(row)
+                row = []
+                row_width = 0
+            row.append((child, child_width))
+            row_width = (
+                child_width
+                if len(row) == 1
+                else row_width + self.spacing + child_width
+            )
+        if row:
+            rows.append(row)
+        return rows
+
+    def do_get_preferred_height(self) -> tuple[int, int]:
+        _minimum_width, natural_width = self.do_get_preferred_width()
+        return self.do_get_preferred_height_for_width(natural_width)
+
+    def do_get_preferred_height_for_width(self, width: int) -> tuple[int, int]:
+        minimum = 0
+        natural = 0
+        rows = self._rows(width)
+        for row in rows:
+            heights = [
+                child.get_preferred_height_for_width(child_width)
+                for child, child_width in row
+            ]
+            minimum += max(height[0] for height in heights)
+            natural += max(height[1] for height in heights)
+        gaps = self.spacing * max(0, len(rows) - 1)
+        return minimum + gaps, natural + gaps
+
+    def do_size_allocate(self, allocation: Gdk.Rectangle) -> None:
+        self.set_allocation(allocation)
+        y = allocation.y
+        for row in self._rows(allocation.width):
+            heights = [
+                child.get_preferred_height_for_width(child_width)[1]
+                for child, child_width in row
+            ]
+            x = allocation.x
+            for (child, child_width), child_height in zip(row, heights):
+                child_allocation = Gdk.Rectangle()
+                child_allocation.x = x
+                child_allocation.y = y
+                child_allocation.width = child_width
+                child_allocation.height = child_height
+                child.size_allocate(child_allocation)
+                x += child_width + self.spacing
+            y += max(heights) + self.spacing
+
+
 CSS = """
 #ai-bar {
   background: #2b2f32;
@@ -778,7 +867,11 @@ button.tray-icon-cell:checked {
 }
 
 .terminal-wrap {
-  border-top: 1px solid #303638;
+  border-top: 1px solid #17191a;
+  border-left: 1px solid #17191a;
+  border-right: 1px solid #4a5054;
+  border-bottom: 1px solid #4a5054;
+  box-shadow: none;
   margin-top: 2px;
 }
 
@@ -954,19 +1047,14 @@ class AiBarWindow(Gtk.Window):
         status_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         status_area.get_style_context().add_class("status-area")
 
-        status_flow = Gtk.FlowBox()
+        status_flow = NaturalWrapBox(spacing=6)
         status_flow.get_style_context().add_class("status-flow")
-        status_flow.set_selection_mode(Gtk.SelectionMode.NONE)
-        status_flow.set_min_children_per_line(1)
-        status_flow.set_max_children_per_line(20)
-        status_flow.set_column_spacing(6)
-        status_flow.set_row_spacing(6)
         status_flow.set_direction(Gtk.TextDirection.LTR)
 
         for item in self.config.get("tray", {}).get("items", []):
             if item.get("type") == "volume":
-                self._add_flow_child(status_flow, self._build_configuration_assistant_button())
-            self._add_flow_child(status_flow, self._build_status_button(item))
+                status_flow.add(self._build_configuration_assistant_button())
+            status_flow.add(self._build_status_button(item))
 
         tray_flow = Gtk.FlowBox()
         tray_flow.get_style_context().add_class("status-flow")
@@ -1066,7 +1154,6 @@ class AiBarWindow(Gtk.Window):
     def _build_volume_control(self, item: dict[str, Any]) -> Gtk.Widget:
         control = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         control.get_style_context().add_class("volume-control")
-        control.set_hexpand(True)
 
         mute_button = Gtk.Button()
         mute_button.get_style_context().add_class("volume-mute-button")

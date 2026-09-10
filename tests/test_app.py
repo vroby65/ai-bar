@@ -19,6 +19,7 @@ from gi.repository import Gdk, GdkPixbuf, Gtk, Vte
 from ai_bar.app import (
     AiBarWindow,
     CSS,
+    NaturalWrapBox,
     WindowInfo,
     X,
     X11SuperToggle,
@@ -55,6 +56,35 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 
 
 class ClockLayoutTests(unittest.TestCase):
+    def test_natural_wrap_box_wraps_without_table_columns(self):
+        wrap = NaturalWrapBox(spacing=6)
+        widgets = []
+        for width in (40, 220, 90, 70):
+            widget = Gtk.DrawingArea()
+            widget.set_size_request(width, 30)
+            wrap.add(widget)
+            widgets.append(widget)
+
+        window = Gtk.Window()
+        window.set_default_size(350, 100)
+        window.add(wrap)
+        window.show_all()
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+
+        allocations = [widget.get_allocation() for widget in widgets]
+        self.assertEqual(
+            [(item.x, item.y, item.width, item.height) for item in allocations],
+            [
+                (0, 0, 40, 30),
+                (46, 0, 220, 30),
+                (0, 36, 90, 30),
+                (96, 36, 70, 30),
+            ],
+        )
+
+        window.destroy()
+
     def test_panel_and_buttons_use_flat_surfaces(self):
         panel_css = CSS.split("#ai-bar {", 1)[1].split("}", 1)[0]
         button_css = CSS.split("button {", 1)[1].split("}", 1)[0]
@@ -102,6 +132,15 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIn("padding-bottom: 3px;", pinned_css)
         self.assertIn("border-color: #f2f2ee;", active_css)
         self.assertIn("border-width: 2px;", active_css)
+
+    def test_terminal_frame_is_sunken_with_light_bottom_right_edges(self):
+        terminal_css = CSS.split(".terminal-wrap {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("border-top: 1px solid #17191a;", terminal_css)
+        self.assertIn("border-left: 1px solid #17191a;", terminal_css)
+        self.assertIn("border-right: 1px solid #4a5054;", terminal_css)
+        self.assertIn("border-bottom: 1px solid #4a5054;", terminal_css)
+        self.assertIn("box-shadow: none;", terminal_css)
 
     def test_tool_buttons_are_compact(self):
         launcher_css = CSS.split("button.launcher-button {", 1)[1].split("}", 1)[0]
@@ -176,13 +215,15 @@ class ClockLayoutTests(unittest.TestCase):
         status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
-        assistant_button, volume_control, display_button, screenshot_button = [
-            child.get_child() for child in status_flow.get_children()
-        ]
+        assistant_button, volume_control, display_button, screenshot_button = (
+            status_flow.get_children()
+        )
         tray_row = status_area.get_children()[1]
         tray_flow, macro_recorder_button, spiral_button = tray_row.get_children()
         self.assertIsInstance(assistant_button, Gtk.Button)
         self.assertIsInstance(volume_control, Gtk.Box)
+        self.assertIsInstance(status_flow, NaturalWrapBox)
+        self.assertFalse(volume_control.get_hexpand())
         self.assertNotIn(assistant_button, volume_control.get_children())
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
         self.assertEqual(display_button.get_tooltip_text(), "Display")
