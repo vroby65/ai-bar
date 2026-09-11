@@ -107,10 +107,11 @@ invoking `sudo -A` process; it must never persist or log it.
 - Keep application styling in `CSS` in `ai_bar/app.py`. Apply the shared accent
   palette through `add_accent_color`; use stable indices and let the helper wrap
   them instead of duplicating color classes or declarations.
-- Preserve the distinct window-dock signals: `pinned-window` on the
-  `Gtk.FlowBoxChild` supplies the yellow underline, `open-window` supplies the green
-  border, and `active-window` supplies the light outline. Styling a nested button
-  does not replace styling its flow-box child.
+- Preserve the distinct window-dock signals: `pinned-window` on the button supplies
+  the light border, `open-window` on a pinned `Gtk.FlowBoxChild` supplies the yellow
+  underline when open, and `grouped-window` supplies the same underline for grouped
+  unpinned windows. Styling a nested button does not replace styling its flow-box
+  child.
 - Page-action, quick-launcher, and tray-icon buttons are intentionally transparent.
   Main controls use flat solid fills without theme gradients or shadows.
 - XEmbed clients do not inherit GTK CSS. When the `#ai-bar` background changes,

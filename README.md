@@ -59,9 +59,10 @@ with `config.example.json` and customize:
 - `launcher_groups`: groups of buttons, icons, and commands; external launchers
   stay pinned in the window dock and focus the application instead of creating a
   duplicate button when it is already open; a yellow underline marks pinned
-  launchers, a green border marks launchers with an open window, and a light
-  outline marks the active window; multiple windows from an application share one
-  button and repeated clicks cycle through them; right-click an unpinned
+  launchers with an open window, while pinned launchers have a light border; for
+  unpinned applications the yellow underline marks buttons that group multiple
+  windows; multiple windows from an application share one button and repeated
+  clicks cycle through them; right-click an unpinned
   application and choose `Mantieni nella barra` to save it as a launcher, or
   right-click a pinned one to open a new instance or remove it
 - `launcher_groups[].buttons[].app_id`: stable application identifier saved
@@ -81,6 +82,7 @@ with `config.example.json` and customize:
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
 The default screenshot button opens MATE Screenshot's interactive menu, where you can choose the capture mode and options.
+The battery indicator immediately after it shows the current charge percentage when the system exposes one.
 
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
 

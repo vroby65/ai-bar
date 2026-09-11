@@ -36,6 +36,7 @@ from ai_bar.app import (
     pinned_window_command,
     place_window,
     panel_x_for_state,
+    read_battery_percentage,
     webkit_cookie_storage_path,
     launcher_page_key,
     favicon_cache_path,
@@ -113,25 +114,20 @@ class ClockLayoutTests(unittest.TestCase):
 
         self.assertIn("background-color: #c0c0c0;", separator_css)
 
-    def test_open_window_has_a_distinct_border(self):
-        open_window_css = CSS.split("button.window-button.open-window {", 1)[1].split(
+    def test_window_dock_marks_pinned_open_and_grouped_buttons_differently(self):
+        pinned_css = CSS.split("button.window-button.pinned-window,", 1)[1].split(
+            "}", 1
+        )[0]
+        underlined_css = CSS.split(
+            ".window-flow flowboxchild.open-window,", 1
+        )[1].split(
             "}", 1
         )[0]
 
-        self.assertIn("border-color: #63b68e;", open_window_css)
-
-    def test_window_dock_marks_pinned_and_active_buttons_differently(self):
-        pinned_css = CSS.split(".window-flow flowboxchild.pinned-window {", 1)[1].split(
-            "}", 1
-        )[0]
-        active_css = CSS.split("button.window-button.active-window,", 1)[1].split(
-            "}", 1
-        )[0]
-
-        self.assertIn("border-bottom: 2px solid #ffea00;", pinned_css)
-        self.assertIn("padding-bottom: 3px;", pinned_css)
-        self.assertIn("border-color: #f2f2ee;", active_css)
-        self.assertIn("border-width: 2px;", active_css)
+        self.assertIn("border-color: #f2f2ee;", pinned_css)
+        self.assertIn("border-width: 2px;", pinned_css)
+        self.assertIn("border-bottom: 2px solid #ffea00;", underlined_css)
+        self.assertIn("padding-bottom: 3px;", underlined_css)
 
     def test_terminal_frame_is_sunken_with_light_bottom_right_edges(self):
         terminal_css = CSS.split(".terminal-wrap {", 1)[1].split("}", 1)[0]
@@ -176,7 +172,7 @@ class ClockLayoutTests(unittest.TestCase):
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_display_and_screenshot_stay_with_volume_and_separate_from_tray(
+    def test_battery_follows_screenshot_with_percentage_and_stays_out_of_tray(
         self,
         _xapp_host,
         _xembed_host,
@@ -212,12 +208,17 @@ class ClockLayoutTests(unittest.TestCase):
         window._tile_windows_spiral = Mock()
         window._launch = Mock()
 
-        status_area = window._build_tray_row()
+        with patch("ai_bar.app.read_battery_percentage", return_value=73):
+            status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
-        assistant_button, volume_control, display_button, screenshot_button = (
-            status_flow.get_children()
-        )
+        (
+            assistant_button,
+            volume_control,
+            display_button,
+            screenshot_button,
+            battery_button,
+        ) = status_flow.get_children()
         tray_row = status_area.get_children()[1]
         tray_flow, macro_recorder_button, spiral_button = tray_row.get_children()
         self.assertIsInstance(assistant_button, Gtk.Button)
@@ -228,6 +229,10 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
         self.assertEqual(display_button.get_tooltip_text(), "Display")
         self.assertEqual(screenshot_button.get_tooltip_text(), "Screenshot")
+        self.assertEqual(battery_button.get_tooltip_text(), "Batteria")
+        battery_children = battery_button.get_child().get_children()
+        self.assertIsInstance(battery_children[0], Gtk.Image)
+        self.assertEqual(battery_children[1].get_text(), "73%")
         self.assertEqual(
             macro_recorder_button.get_tooltip_text(), "Avvia Macro Recorder"
         )
@@ -261,6 +266,19 @@ class ClockLayoutTests(unittest.TestCase):
         spiral_button.emit("clicked")
         window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
+
+    def test_battery_percentage_comes_from_the_battery_power_supply(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            power_supplies = Path(temporary_directory)
+            mains = power_supplies / "AC"
+            mains.mkdir()
+            (mains / "type").write_text("Mains\n", encoding="utf-8")
+            battery = power_supplies / "BAT0"
+            battery.mkdir()
+            (battery / "type").write_text("Battery\n", encoding="utf-8")
+            (battery / "capacity").write_text("73\n", encoding="utf-8")
+
+            self.assertEqual(read_battery_percentage(power_supplies), 73)
 
     def test_legacy_screenshot_button_opens_the_interactive_menu(self):
         window = AiBarWindow.__new__(AiBarWindow)
@@ -585,6 +603,12 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertTrue(children[0].get_style_context().has_class("pinned-window"))
         self.assertTrue(children[1].get_style_context().has_class("pinned-window"))
         self.assertFalse(children[2].get_style_context().has_class("pinned-window"))
+        self.assertTrue(children[0].get_style_context().has_class("open-window"))
+        self.assertFalse(children[1].get_style_context().has_class("open-window"))
+        self.assertFalse(children[2].get_style_context().has_class("open-window"))
+        self.assertFalse(children[0].get_style_context().has_class("grouped-window"))
+        self.assertFalse(children[1].get_style_context().has_class("grouped-window"))
+        self.assertTrue(children[2].get_style_context().has_class("grouped-window"))
 
         buttons[0].emit("clicked")
         buttons[0].emit("clicked")
@@ -602,6 +626,51 @@ class ClockLayoutTests(unittest.TestCase):
             ],
         )
         window._launch.assert_called_once_with(["gnome-terminal"], maximized=False)
+        window.window_flow.destroy()
+
+    def test_pinned_open_window_is_underlined_without_focus(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {
+            "launcher_groups": [
+                {
+                    "buttons": [
+                        {
+                            "label": "Firefox",
+                            "command": ["firefox"],
+                        }
+                    ]
+                }
+            ]
+        }
+        window.window_flow = Gtk.FlowBox()
+        window.window_children = []
+        window._activate_window = Mock()
+
+        window._rebuild_window_buttons(
+            [WindowInfo(10, "Firefox", False, None, "firefox")]
+        )
+
+        child = window.window_flow.get_children()[0]
+        self.assertTrue(child.get_style_context().has_class("open-window"))
+        self.assertFalse(child.get_style_context().has_class("active-window"))
+        window.window_flow.destroy()
+
+    def test_unpinned_active_single_window_is_not_underlined(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {"launcher_groups": []}
+        window.window_flow = Gtk.FlowBox()
+        window.window_children = []
+        window._activate_window = Mock()
+
+        window._rebuild_window_buttons(
+            [WindowInfo(10, "Editor", True, None, "editor")]
+        )
+
+        child = window.window_flow.get_children()[0]
+        button = child.get_child()
+        self.assertTrue(button.get_style_context().has_class("active-window"))
+        self.assertFalse(child.get_style_context().has_class("active-window"))
+        self.assertFalse(child.get_style_context().has_class("grouped-window"))
         window.window_flow.destroy()
 
     @patch(

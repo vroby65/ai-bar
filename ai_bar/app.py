@@ -729,17 +729,14 @@ button.launcher-button {
   min-height: 48px;
 }
 
-button.window-button.open-window {
-  border-color: #63b68e;
-}
-
-button.window-button.active-window,
+button.window-button.pinned-window,
 button.launcher-button.active-launcher {
   border-color: #f2f2ee;
   border-width: 2px;
 }
 
-.window-flow flowboxchild.pinned-window {
+.window-flow flowboxchild.open-window,
+.window-flow flowboxchild.grouped-window {
   border-bottom: 2px solid #ffea00;
   padding-bottom: 3px;
 }
@@ -900,6 +897,7 @@ class AiBarWindow(Gtk.Window):
         self.tray_host: XEmbedTrayHost | None = None
         self.xapp_tray_host: XAppStatusIconHost | None = None
         self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
+        self.battery_label: Gtk.Label | None = None
         self.volume_controls: list[tuple[Gtk.Scale, Gtk.Label, Gtk.Image]] = []
         self.volume_percent = 0
         self.volume_muted = False
@@ -1050,11 +1048,14 @@ class AiBarWindow(Gtk.Window):
         status_flow = NaturalWrapBox(spacing=6)
         status_flow.get_style_context().add_class("status-flow")
         status_flow.set_direction(Gtk.TextDirection.LTR)
+        self.battery_label = None
 
         for item in self.config.get("tray", {}).get("items", []):
             if item.get("type") == "volume":
                 status_flow.add(self._build_configuration_assistant_button())
             status_flow.add(self._build_status_button(item))
+            if item.get("type") == "screenshot":
+                status_flow.add(self._build_battery_button())
 
         tray_flow = Gtk.FlowBox()
         tray_flow.get_style_context().add_class("status-flow")
@@ -1091,7 +1092,11 @@ class AiBarWindow(Gtk.Window):
         self._rebuild_window_buttons([])
 
         refresh = int(self.config.get("tray", {}).get("status_refresh_seconds", 5))
-        if self.status_labels or self.volume_controls:
+        if (
+            self.status_labels
+            or self.battery_label is not None
+            or self.volume_controls
+        ):
             self._update_status_items()
             GLib.timeout_add_seconds(max(1, refresh), self._update_status_items)
 
@@ -1149,6 +1154,25 @@ class AiBarWindow(Gtk.Window):
         if command:
             button.connect("clicked", lambda _button: self._launch(command))
 
+        return button
+
+    def _build_battery_button(self) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("status-button")
+        add_accent_color(button, 4)
+        button.set_tooltip_text("Batteria")
+        button.set_relief(Gtk.ReliefStyle.NONE)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        inner.pack_start(
+            Gtk.Image.new_from_icon_name("battery-symbolic", Gtk.IconSize.BUTTON),
+            False,
+            False,
+            0,
+        )
+        self.battery_label = Gtk.Label(label="—")
+        inner.pack_start(self.battery_label, False, False, 0)
+        button.add(inner)
         return button
 
     def _build_volume_control(self, item: dict[str, Any]) -> Gtk.Widget:
@@ -1386,6 +1410,8 @@ class AiBarWindow(Gtk.Window):
                     ),
                 )
                 child.get_style_context().add_class("pinned-window")
+                if matches:
+                    child.get_style_context().add_class("open-window")
                 self.window_children.append(child)
                 color_index += 1
 
@@ -1397,6 +1423,8 @@ class AiBarWindow(Gtk.Window):
             child = self._add_flow_child(
                 self.window_flow, self._build_window_button(group, color_index)
             )
+            if len(group) > 1:
+                child.get_style_context().add_class("grouped-window")
             self.window_children.append(child)
             color_index += 1
 
@@ -1960,6 +1988,10 @@ class AiBarWindow(Gtk.Window):
             item_type = item.get("type")
             if item_type == "wifi":
                 label.set_text(read_wifi_status())
+
+        if self.battery_label is not None:
+            percentage = read_battery_percentage()
+            self.battery_label.set_text("—" if percentage is None else f"{percentage}%")
 
         if self.volume_controls:
             state = read_volume_state()
@@ -3427,6 +3459,24 @@ def set_system_muted(muted: bool) -> bool:
     if run_system_command(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", value]):
         return True
     return run_system_command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", value])
+
+
+def read_battery_percentage(
+    power_supply_path: Path = Path("/sys/class/power_supply"),
+) -> int | None:
+    try:
+        power_supplies = sorted(power_supply_path.iterdir())
+    except OSError:
+        return None
+
+    for power_supply in power_supplies:
+        try:
+            if (power_supply / "type").read_text(encoding="utf-8").strip() != "Battery":
+                continue
+            return int((power_supply / "capacity").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def read_wifi_status() -> str:
