@@ -10,7 +10,8 @@
   },
   "clock": {
     "time_format": "%H:%M:%S",
-    "date_format": "%A %d %B %Y"
+    "date_format": "%A %d %B %Y",
+    "command": ["google-chrome", "https://calendar.google.com/"]
   },
   "tray": {
     "xembed": true,

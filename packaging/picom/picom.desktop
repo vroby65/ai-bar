@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Picom
+Comment=Rounded window corners and light borders for Openbox
+Exec=picom
+TryExec=picom
+OnlyShowIn=OPENBOX;
+Terminal=false

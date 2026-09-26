@@ -39,6 +39,37 @@ class MonitorConfigTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_clock_command_defaults_when_loading_an_older_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps({"clock": {"time_format": "%H:%M"}}))
+            config = load_config(path)
+
+        self.assertEqual(
+            config["clock"]["command"],
+            ["google-chrome", "https://calendar.google.com/"],
+        )
+        self.assertEqual(config["clock"]["time_format"], "%H:%M")
+
+    def test_clock_command_accepts_custom_commands_and_null(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            for command in (["firefox", "https://calendar.google.com/"], "gsimplecal", None):
+                with self.subTest(command=command):
+                    path.write_text(json.dumps({"clock": {"command": command}}))
+                    config = load_config(path)
+                    self.assertEqual(config["clock"]["command"], command)
+                    self.assertEqual(config["clock"]["date_format"], "%A %d %B %Y")
+
+    def test_clock_command_rejects_invalid_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            for command in ("", "   ", [], [42], False, 42, {}):
+                with self.subTest(command=command):
+                    path.write_text(json.dumps({"clock": {"command": command}}))
+                    with self.assertRaisesRegex(ConfigError, "clock.command"):
+                        load_config(path)
+
     def test_example_matches_default_config(self):
         example = Path(__file__).resolve().parents[1] / "config.example.json"
 

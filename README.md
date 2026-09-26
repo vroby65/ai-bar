@@ -8,6 +8,9 @@ while page actions, quick launchers, and tray icons remain transparent.
 
 ## Installation
 
+Open `Installa AI-bar.desktop` from the checkout to run the installer in a
+terminal. If the file manager asks, allow the launcher to run. Alternatively:
+
 ```bash
 ./install.sh
 ```
@@ -21,8 +24,20 @@ Run the script as a regular user, without `sudo`: it requests elevated privilege
 - creates `~/.config/ai-bar/config.json` if it does not exist, using the
   configuration bundled with the installer
 - installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
+- installs Picom with the GLX renderer, 14 px rounded corners, and light 2 px
+  borders, including windows that draw their own decorations (such as Calculator)
 - installs the `AI Bar Openbox` session for the login manager
 - fixes MintUpdate's tray reopening on affected versions, when MintUpdate is installed
+
+Picom starts automatically with Openbox on the next login. Maximized and
+fullscreen windows, panels, and menus remain square. The installer writes
+`$XDG_CONFIG_HOME/picom.conf`, `picom/csd-border.glsl`, and
+`autostart/picom.desktop` (under `~/.config` by default), adapting the shader path
+to the installing user. Existing files are preserved as `*.ai-bar.bak` before
+replacement; running the installer again keeps the original backup. The Openbox
+border is lighter on the active window; windows with their own decorations use
+the same light border when inactive. An existing Openbox theme selection is
+preserved, so select `Aura Midnight` if another theme is currently configured.
 
 The MintUpdate fix preserves the original file as `mintUpdate.py.ai-bar.bak` and
 is safe to run again. A MintUpdate package upgrade can overwrite it; rerun
@@ -51,6 +66,8 @@ python3 -m ai_bar --config config.example.json
 
 The editable installation loads Python code directly from this checkout. After a code change, use the `Reload` button to test it without running the installer again.
 
+By default, left-click the date or time at the top of the panel to open Google Calendar in Google Chrome (`google-chrome`). Set `clock.command` to change this action or disable it with `null`.
+
 ## Configuration
 
 The default file is `$XDG_CONFIG_HOME/ai-bar/config.json`, falling back to
@@ -63,6 +80,7 @@ with `config.example.json` and customize:
 - `panel.resizable`: enables dragging the side edge to change the width
 - `panel.monitor`: which monitor holds the panel, by index or connector name such as `DP-1`; unset uses the primary one
 - `panel.launch_monitor`: where windows started from the panel should appear, by index or connector name, or `auto` for the primary monitor; unset leaves placement to the window manager
+- `clock.command`: command to run on a left-click on the date or time, as an argument list or shell string; defaults to `["google-chrome", "https://calendar.google.com/"]` when omitted; `null` disables the action
 - `tray.items`: side items such as volume, Telegram, or custom commands
 - `tray.icon_size`: size of XApp and XEmbed tray icons, default `16`
 - `tray.items[].icon_only`: `true` shows only the icon for that item, without the text label

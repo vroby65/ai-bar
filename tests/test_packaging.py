@@ -1,4 +1,8 @@
+import configparser
 import json
+import shlex
+import shutil
+import sys
 import os
 import subprocess
 import tempfile
@@ -95,6 +99,63 @@ class PackagingTests(unittest.TestCase):
             "or-codex",
             [button["label"] for button in shipped_config["launcher_groups"][1]["buttons"]],
         )
+
+    def test_installer_includes_picom_and_the_window_profile(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("    picom\n", installer)
+        self.assertIn('python3 "$PROJECT_DIR/scripts/install-picom.py"', installer)
+        theme = (ROOT / "packaging/themes/Aura Midnight/openbox-3/themerc").read_text()
+        self.assertIn("border.width: 2\n", theme)
+        self.assertIn("window.active.border.color: #b0b0b0", theme)
+        self.assertIn("window.inactive.border.color: #808080", theme)
+
+    def test_picom_profile_installs_for_another_user_and_preserves_originals(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            config_home = Path(temporary_directory) / 'config with spaces and "quotes"'
+            config_home.mkdir()
+            config = config_home / "picom.conf"
+            config.write_text("vsync = true;\n")
+            environment = dict(os.environ, XDG_CONFIG_HOME=str(config_home))
+            command = [sys.executable, ROOT / "scripts/install-picom.py"]
+            subprocess.run(command, env=environment, check=True)
+
+            contents = config.read_text()
+            self.assertIn('backend = "glx";', contents)
+            self.assertIn("corner-radius = 14;", contents)
+            for state in ("MAXIMIZED_VERT", "MAXIMIZED_HORZ", "FULLSCREEN"):
+                self.assertIn("_NET_WM_STATE_" + state, contents)
+            shader = config_home / "picom/csd-border.glsl"
+            self.assertEqual(shader.read_bytes(), (ROOT / "packaging/picom/csd-border.glsl").read_bytes())
+            self.assertIn(json.dumps(str(shader))[1:-1], contents)
+            self.assertNotIn("/home/user", contents)
+            self.assertNotIn("@SHADER_PATH@", contents)
+            self.assertEqual(config.with_name("picom.conf.ai-bar.bak").read_text(), "vsync = true;\n")
+
+            autostart = configparser.ConfigParser(interpolation=None)
+            autostart.read(config_home / "autostart/picom.desktop")
+            self.assertEqual(autostart["Desktop Entry"]["Exec"], "picom")
+            self.assertEqual(autostart["Desktop Entry"]["OnlyShowIn"], "OPENBOX;")
+            subprocess.run(command, env=environment, check=True)
+            self.assertEqual(config.read_text(), contents)
+            self.assertEqual(config.with_name("picom.conf.ai-bar.bak").read_text(), "vsync = true;\n")
+
+    def test_clickable_installer_runs_from_a_checkout_with_spaces(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            checkout = Path(temporary_directory) / "checkout with spaces"
+            checkout.mkdir()
+            launcher = checkout / "Installa AI-bar.desktop"
+            shutil.copyfile(ROOT / launcher.name, launcher)
+            marker = checkout / "installer-ran"
+            (checkout / "install.sh").write_text(
+                '#!/usr/bin/env bash\nprintf done > "$(dirname -- "$0")/installer-ran"\n'
+            )
+            desktop = configparser.ConfigParser(interpolation=None)
+            desktop.read(launcher)
+            self.assertEqual(desktop["Desktop Entry"]["Terminal"], "true")
+            argv = shlex.split(desktop["Desktop Entry"]["Exec"])
+            argv = [str(launcher) if arg == "%k" else arg for arg in argv]
+            subprocess.run(argv, input="\n", text=True, capture_output=True, check=True)
+            self.assertEqual(marker.read_text(), "done")
 
     def test_installer_and_session_launcher_have_valid_shell_syntax(self):
         for path in (

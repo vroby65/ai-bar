@@ -34,6 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "clock": {
         "time_format": "%H:%M:%S",
         "date_format": "%A %d %B %Y",
+        "command": ["google-chrome", "https://calendar.google.com/"],
     },
     "tray": {
         "xembed": True,
@@ -285,6 +286,10 @@ def validate_config(config: dict[str, Any]) -> None:
             "panel.launch_monitor deve essere null, \"auto\", un indice "
             "intero non negativo oppure il nome di un connettore."
         )
+
+    clock_command = config.get("clock", {}).get("command")
+    if clock_command is not None:
+        validate_command(clock_command, "clock.command")
 
     for group in config.get("launcher_groups", []):
         columns = group.get("columns", 1)

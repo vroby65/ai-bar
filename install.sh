@@ -19,7 +19,9 @@ APT_PACKAGES=(
     gnome-keyring
     libpam-gnome-keyring
     python3-xlib
+    python3-xdg
     openbox
+    picom
     policykit-1-gnome
     pipx
     pulseaudio-utils
@@ -289,6 +291,9 @@ if [ ! -f "$HOME/.config/openbox/rc.xml" ]; then
 EOF
     echo "Configurazione openbox creata con il tema Aura Midnight: $HOME/.config/openbox/rc.xml"
 fi
+
+echo "Installazione degli angoli arrotondati e dei bordi chiari..."
+python3 "$PROJECT_DIR/scripts/install-picom.py"
 
 echo "Installazione dei collegamenti dei comandi..."
 sudo ln -sfn -- "$AI_BAR_BIN" /usr/local/bin/ai-bar

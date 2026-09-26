@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Installa AI-bar
+Comment=Installa AI-bar, il tema Openbox e gli angoli arrotondati
+Exec=python3 -c "import pathlib, subprocess, sys; status = subprocess.call(['bash', str(pathlib.Path(sys.argv[1]).parent / 'install.sh')]); input('Premi Invio per chiudere...'); sys.exit(status)" %k
+Icon=system-software-install
+Terminal=true
+Categories=System;

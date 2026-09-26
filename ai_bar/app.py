@@ -1041,7 +1041,9 @@ class AiBarWindow(Gtk.Window):
         return root
 
     def _build_clock(self) -> Gtk.Widget:
-        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        wrapper = Gtk.EventBox()
+        wrapper.set_visible_window(False)
+        wrapper.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.clock_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
         self.time_label = Gtk.Label()
         self.date_label = Gtk.Label()
@@ -1051,12 +1053,20 @@ class AiBarWindow(Gtk.Window):
         self.date_label.set_xalign(0.5)
         self.clock_box.pack_start(self.time_label, False, False, 0)
         self.clock_box.pack_start(self.date_label, False, False, 0)
-        wrapper.pack_start(self.clock_box, False, False, 0)
+        wrapper.add(self.clock_box)
+        wrapper.connect("button-press-event", self._on_clock_button_press)
         wrapper.connect("size-allocate", self._on_clock_size_allocate)
 
         self._update_clock()
         GLib.timeout_add_seconds(1, self._update_clock)
         return wrapper
+
+    def _on_clock_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        command = self.config.get("clock", {}).get("command")
+        if event.button != 1 or command is None:
+            return False
+        self._launch(command)
+        return True
 
     def _build_tray_row(self) -> Gtk.Widget:
         status_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)

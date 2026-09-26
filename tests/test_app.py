@@ -53,9 +53,54 @@ from ai_bar.app import (
     volume_status_from_wpctl,
 )
 from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
+from ai_bar.config import default_config
 
 
 class ClockLayoutTests(unittest.TestCase):
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    def test_clock_click_opens_google_calendar_in_chrome(self, _timeout_add):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = default_config()
+        window.config["clock"].update(time_format="time", date_format="date")
+        window._launch = Mock()
+        clock = window._build_clock()
+        self.addCleanup(clock.destroy)
+
+        self.assertEqual(window.time_label.get_text(), "time")
+        self.assertEqual(window.date_label.get_text(), "date")
+        self.assertTrue(window.time_label.is_ancestor(clock))
+        self.assertTrue(window.date_label.is_ancestor(clock))
+        event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
+        event.button = 1
+        self.assertTrue(clock.emit("button-press-event", event))
+        window._launch.assert_called_once_with(
+            ["google-chrome", "https://calendar.google.com/"]
+        )
+
+        window._launch.reset_mock()
+        for button in (2, 3):
+            event.button = button
+            self.assertFalse(clock.emit("button-press-event", event))
+        window._launch.assert_not_called()
+
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    def test_clock_click_uses_configured_command_or_is_disabled(self, _timeout_add):
+        for command in (["firefox", "https://calendar.google.com/"], "gsimplecal", None):
+            with self.subTest(command=command):
+                window = AiBarWindow.__new__(AiBarWindow)
+                window.config = default_config()
+                window.config["clock"]["command"] = command
+                window._launch = Mock()
+                clock = window._build_clock()
+                self.addCleanup(clock.destroy)
+                event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
+                event.button = 1
+                self.assertEqual(clock.emit("button-press-event", event), command is not None)
+                if command is None:
+                    window._launch.assert_not_called()
+                else:
+                    window._launch.assert_called_once_with(command)
+
     def test_natural_wrap_box_wraps_without_table_columns(self):
         wrap = NaturalWrapBox(spacing=6)
         widgets = []

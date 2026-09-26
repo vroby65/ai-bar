@@ -7,7 +7,7 @@
 window.label.text.justify: Center
 padding.width: 10
 padding.height: 10
-border.width: 0
+border.width: 2
 window.client.padding.width: 0
 window.client.padding.height: 0
 window.handle.width: 0
@@ -81,8 +81,8 @@ window.inactive.button.toggled.hover.bg.color: #2c2c2c
 window.inactive.button.toggled.hover.image.color: #5C9DFF
 
 # [ Colors & Borders ] --------------------------------------------
-window.active.border.color: #2c2c2c
-window.inactive.border.color: #2c2c2c
+window.active.border.color: #b0b0b0
+window.inactive.border.color: #808080
 window.active.client.color: #2c2c2c
 window.inactive.client.color: #2c2c2c
 window.active.title.separator.color: #2c2c2c
