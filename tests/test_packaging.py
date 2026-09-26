@@ -46,6 +46,21 @@ class PackagingTests(unittest.TestCase):
 
         self.assertIn("    yad\n", installer)
 
+    def test_installer_provides_mate_display_settings(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("    mate-control-center\n", installer)
+
+    def test_installer_applies_mintupdate_tray_fix_when_installed(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'if [ -f /usr/lib/linuxmint/mintUpdate/mintUpdate.py ]; then\n'
+            '    sudo /usr/bin/python3 "$PROJECT_DIR/scripts/patch-mintupdate.py"\n'
+            'fi',
+            installer,
+        )
+
     def test_installer_enables_gnome_keyring_for_lightdm(self):
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
 
@@ -72,6 +87,9 @@ class PackagingTests(unittest.TestCase):
         shipped_config = json.loads(installer[start:end])
 
         self.assertEqual(shipped_config["panel"]["side"], "left")
+        self.assertEqual(
+            shipped_config["tray"]["items"][1]["command"], ["mate-display-properties"]
+        )
         self.assertEqual(shipped_config["launcher_groups"][1]["title"], "Tools")
         self.assertIn(
             "or-codex",
@@ -313,7 +331,10 @@ class PackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary = Path(temporary_directory)
             openbox = temporary / "openbox-session"
-            openbox.write_text("#!/usr/bin/env bash\nsleep 0.2\n", encoding="utf-8")
+            openbox.write_text(
+                '#!/usr/bin/env bash\ncat /proc/self/cgroup > "$OPENBOX_CGROUP_LOG"\nsleep 0.2\n',
+                encoding="utf-8",
+            )
             openbox.chmod(0o755)
 
             agent_log = temporary / "polkit-agent.log"
@@ -323,6 +344,7 @@ class PackagingTests(unittest.TestCase):
                     """\
                     #!/usr/bin/env bash
                     printf 'started\n' >> "$POLKIT_AGENT_TEST_LOG"
+                    cat /proc/self/cgroup > "$POLKIT_CGROUP_LOG"
                     sleep 5
                     """
                 ),
@@ -355,6 +377,8 @@ class PackagingTests(unittest.TestCase):
                     "OPENBOX_SESSION": str(openbox),
                     "POLKIT_AUTH_AGENT": str(agent),
                     "POLKIT_AGENT_TEST_LOG": str(agent_log),
+                    "POLKIT_CGROUP_LOG": str(temporary / "polkit-cgroup"),
+                    "OPENBOX_CGROUP_LOG": str(temporary / "openbox-cgroup"),
                     "XDG_CONFIG_HOME": str(temporary / "config"),
                 }
             )
@@ -367,6 +391,9 @@ class PackagingTests(unittest.TestCase):
             )
 
             self.assertEqual(agent_log.read_text(encoding="utf-8"), "started\n")
+            session_cgroup = Path("/proc/self/cgroup").read_text(encoding="utf-8")
+            self.assertEqual((temporary / "polkit-cgroup").read_text(), session_cgroup)
+            self.assertEqual((temporary / "openbox-cgroup").read_text(), session_cgroup)
 
     def test_session_launcher_handles_reboot_inside_the_login_session(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -50,7 +50,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "type": "display",
                 "label": "Display",
                 "icon": "preferences-desktop-display-symbolic",
-                "command": ["arandr"],
+                "command": ["mate-display-properties"],
                 "icon_only": True,
             },
             {

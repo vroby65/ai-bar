@@ -24,6 +24,7 @@ APT_PACKAGES=(
     pipx
     pulseaudio-utils
     pavucontrol
+    mate-control-center
     network-manager
     yad
 )
@@ -54,6 +55,10 @@ if [ "${#missing_packages[@]}" -gt 0 ]; then
     echo "Installazione dipendenze di sistema: ${missing_packages[*]}"
     sudo apt-get update
     sudo apt-get install -y "${missing_packages[@]}"
+fi
+
+if [ -f /usr/lib/linuxmint/mintUpdate/mintUpdate.py ]; then
+    sudo /usr/bin/python3 "$PROJECT_DIR/scripts/patch-mintupdate.py"
 fi
 
 echo "Abilitazione del keyring per LightDM..."
@@ -100,7 +105,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
         "type": "display",
         "label": "Display",
         "icon": "preferences-desktop-display-symbolic",
-        "command": ["arandr"],
+        "command": ["mate-display-properties"],
         "icon_only": true
       },
       {

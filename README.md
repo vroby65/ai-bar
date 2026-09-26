@@ -22,6 +22,16 @@ Run the script as a regular user, without `sudo`: it requests elevated privilege
   configuration bundled with the installer
 - installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
 - installs the `AI Bar Openbox` session for the login manager
+- fixes MintUpdate's tray reopening on affected versions, when MintUpdate is installed
+
+The MintUpdate fix preserves the original file as `mintUpdate.py.ai-bar.bak` and
+is safe to run again. A MintUpdate package upgrade can overwrite it; rerun
+`./install.sh` to reapply it. Versions with different tray code are left untouched
+with a diagnostic message. MintUpdate continues to start through Openbox's XDG
+autostart in the graphical login session, where the Polkit authentication agent
+can authorize updates. The installer does not launch or restart MintUpdate; to
+use the fix immediately, quit MintUpdate from its tray menu and reopen it from
+the desktop application menu or a terminal opened by Openbox.
 
 ## Usage
 
@@ -81,8 +91,7 @@ with `config.example.json` and customize:
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
-The default screenshot button opens MATE Screenshot's interactive menu, where you can choose the capture mode and options.
-The battery indicator immediately after it shows the current charge percentage when the system exposes one.
+The default display button opens MATE's display settings (`mate-display-properties`). The default screenshot button opens MATE Screenshot's interactive menu, where you can choose the capture mode and options.
 
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
 
@@ -104,7 +113,7 @@ Embedding GUI programs (`target: "window"`) re-parents the program's first windo
 
 Web views run without accelerated compositing by default. On drivers where the GBM buffer allocation fails — the proprietary NVIDIA driver, for one — WebKit does not fall back on its own and the view stays blank, with `Failed to create GBM buffer` in the session log and nothing at all in the interface. On a view the width of a panel, software rendering costs little; a failure nobody can diagnose costs a lot. Set `webview.hardware_acceleration` to `on-demand` to get WebKit's own behaviour back, or to `always`.
 
-The embedded tray supports XApp icons and, in X11 sessions, XEmbed icons. Applets share a left-aligned grid and wrap individually when they do not fit within the available width. On Wayland and with some modern AppIndicator/StatusNotifier applications, items may not appear in the panel; in that case, the configurable `tray.items` row remains available. On X11, the Super key hides or shows the panel with a sliding animation.
+The embedded tray supports XApp icons and, in X11 sessions, XEmbed icons. Applets share a left-aligned grid and wrap individually when they do not fit within the available width. On Wayland and with some modern AppIndicator/StatusNotifier applications, items may not appear in the panel; in that case, the configurable `tray.items` row remains available. On X11, the Super key hides or shows the panel with a sliding animation. Super+X requests powerdown through the same session authorization flow as the Powerdown button.
 
 ## LightDM/Openbox session
 

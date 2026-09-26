@@ -36,7 +36,6 @@ from ai_bar.app import (
     pinned_window_command,
     place_window,
     panel_x_for_state,
-    read_battery_percentage,
     webkit_cookie_storage_path,
     launcher_page_key,
     favicon_cache_path,
@@ -172,7 +171,7 @@ class ClockLayoutTests(unittest.TestCase):
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_battery_follows_screenshot_with_percentage_and_stays_out_of_tray(
+    def test_status_items_follow_configuration_and_stay_out_of_tray(
         self,
         _xapp_host,
         _xembed_host,
@@ -208,8 +207,7 @@ class ClockLayoutTests(unittest.TestCase):
         window._tile_windows_spiral = Mock()
         window._launch = Mock()
 
-        with patch("ai_bar.app.read_battery_percentage", return_value=73):
-            status_area = window._build_tray_row()
+        status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
         (
@@ -217,7 +215,6 @@ class ClockLayoutTests(unittest.TestCase):
             volume_control,
             display_button,
             screenshot_button,
-            battery_button,
         ) = status_flow.get_children()
         tray_row = status_area.get_children()[1]
         tray_flow, macro_recorder_button, spiral_button = tray_row.get_children()
@@ -229,10 +226,6 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
         self.assertEqual(display_button.get_tooltip_text(), "Display")
         self.assertEqual(screenshot_button.get_tooltip_text(), "Screenshot")
-        self.assertEqual(battery_button.get_tooltip_text(), "Batteria")
-        battery_children = battery_button.get_child().get_children()
-        self.assertIsInstance(battery_children[0], Gtk.Image)
-        self.assertEqual(battery_children[1].get_text(), "73%")
         self.assertEqual(
             macro_recorder_button.get_tooltip_text(), "Avvia Macro Recorder"
         )
@@ -266,19 +259,6 @@ class ClockLayoutTests(unittest.TestCase):
         spiral_button.emit("clicked")
         window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
-
-    def test_battery_percentage_comes_from_the_battery_power_supply(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            power_supplies = Path(temporary_directory)
-            mains = power_supplies / "AC"
-            mains.mkdir()
-            (mains / "type").write_text("Mains\n", encoding="utf-8")
-            battery = power_supplies / "BAT0"
-            battery.mkdir()
-            (battery / "type").write_text("Battery\n", encoding="utf-8")
-            (battery / "capacity").write_text("73\n", encoding="utf-8")
-
-            self.assertEqual(read_battery_percentage(power_supplies), 73)
 
     def test_legacy_screenshot_button_opens_the_interactive_menu(self):
         window = AiBarWindow.__new__(AiBarWindow)
@@ -1243,7 +1223,7 @@ class ClockLayoutTests(unittest.TestCase):
                 "type": "display",
                 "label": "Display",
                 "icon": "preferences-desktop-display-symbolic",
-                "command": ["arandr"],
+                "command": ["mate-display-properties"],
                 "icon_only": True,
             }
         )
@@ -1262,7 +1242,7 @@ class ClockLayoutTests(unittest.TestCase):
                 "type": "display",
                 "label": "Display",
                 "icon": "preferences-desktop-display-symbolic",
-                "command": ["arandr"],
+                "command": ["mate-display-properties"],
             }
         )
 
@@ -1535,7 +1515,7 @@ class ClockLayoutTests(unittest.TestCase):
 
     def test_super_toggle_triggers_only_when_super_is_tapped_alone(self):
         callback = Mock()
-        toggle = X11SuperToggle(callback)
+        toggle = X11SuperToggle(callback, Mock())
         toggle.keycodes = {133}
 
         with patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn: fn()):
@@ -1546,7 +1526,7 @@ class ClockLayoutTests(unittest.TestCase):
 
     def test_super_toggle_ignores_super_combinations(self):
         callback = Mock()
-        toggle = X11SuperToggle(callback)
+        toggle = X11SuperToggle(callback, Mock())
         toggle.keycodes = {133}
 
         with patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn: fn()):
@@ -1556,8 +1536,38 @@ class ClockLayoutTests(unittest.TestCase):
 
         callback.assert_not_called()
 
+    def test_super_x_requests_powerdown_once_without_toggling_panel(self):
+        panel_callback = Mock()
+        powerdown_callback = Mock()
+        toggle = X11SuperToggle(panel_callback, powerdown_callback)
+        toggle.keycodes = {133}
+        toggle.powerdown_keycode = 53
+
+        with patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn: fn()):
+            toggle._handle_event(Mock(type=X.KeyPress, detail=133, state=0))
+            toggle._handle_event(Mock(type=X.KeyPress, detail=53, state=X.Mod4Mask))
+            toggle._handle_event(Mock(type=X.KeyPress, detail=53, state=X.Mod4Mask))
+            toggle._handle_event(Mock(type=X.KeyRelease, detail=133, state=X.Mod4Mask))
+
+        powerdown_callback.assert_called_once_with()
+        panel_callback.assert_not_called()
+
+    def test_super_x_ignores_extra_modifiers(self):
+        powerdown_callback = Mock()
+        toggle = X11SuperToggle(Mock(), powerdown_callback)
+        toggle.keycodes = {133}
+        toggle.powerdown_keycode = 53
+
+        with patch("ai_bar.app.GLib.idle_add", side_effect=lambda fn: fn()):
+            toggle._handle_event(Mock(type=X.KeyPress, detail=133, state=0))
+            toggle._handle_event(
+                Mock(type=X.KeyPress, detail=53, state=X.Mod4Mask | X.ControlMask)
+            )
+
+        powerdown_callback.assert_not_called()
+
     def test_super_toggle_parses_record_events_with_protocol_display(self):
-        toggle = X11SuperToggle(Mock())
+        toggle = X11SuperToggle(Mock(), Mock())
         toggle.display = Mock()
         toggle.display.display = object()
         event = Mock()
@@ -1592,6 +1602,7 @@ class ClockLayoutTests(unittest.TestCase):
         window._apply_strut = Mock()
         window._start_window_list = Mock()
         window._focus_terminal = Mock()
+        window._launch_session_action = Mock()
         window.xapp_tray_host = Mock()
         window.tray_host = Mock()
         events = []
@@ -1605,7 +1616,7 @@ class ClockLayoutTests(unittest.TestCase):
             with (
                 patch.dict(os.environ, {"AI_BAR_READY_FILE": str(ready_file)}),
                 patch("ai_bar.app.GdkX11.X11Window.get_xid", return_value=42),
-                patch("ai_bar.app.X11SuperToggle"),
+                patch("ai_bar.app.X11SuperToggle") as super_toggle,
                 patch("ai_bar.app.GLib.idle_add"),
                 patch(
                     "ai_bar.app.GLib.timeout_add",
@@ -1613,6 +1624,9 @@ class ClockLayoutTests(unittest.TestCase):
                 ),
             ):
                 window._on_realize(None)
+                self.assertEqual(super_toggle.call_args.args[0], window._toggle_panel_visibility)
+                super_toggle.call_args.args[1]()
+                window._launch_session_action.assert_called_once_with("poweroff")
                 self.assertEqual(events, ["xapp", "xembed"])
                 self.assertFalse(ready_file.exists())
                 self.assertTrue(ready_callbacks[0]())

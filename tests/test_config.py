@@ -70,6 +70,7 @@ class ConfigTests(unittest.TestCase):
             ["volume", "display", "screenshot"],
         )
         self.assertEqual(config["tray"]["items"][0]["command"], ["pavucontrol", "-t", "2"])
+        self.assertEqual(config["tray"]["items"][1]["command"], ["mate-display-properties"])
         self.assertEqual(
             config["tray"]["items"][2]["command"],
             ["/usr/bin/mate-screenshot", "--interactive"],
