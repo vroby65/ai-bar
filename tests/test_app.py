@@ -15,6 +15,7 @@ gi.require_version("Vte", "2.91")
 
 from gi.repository import Gdk, GdkPixbuf, Gtk, Vte
 
+from ai_bar.config import default_config
 from ai_bar.app import (
     AiBarWindow,
     CSS,
@@ -1770,7 +1771,7 @@ class DetachTests(unittest.TestCase):
         window._reload_current_page.assert_called_once_with()
         bar.destroy()
 
-    def test_page_actions_include_configured_quick_launchers(self):
+    def test_quick_launchers_keep_configured_order_and_actions(self):
         window = self._window()
         window.config["quick_launchers"] = [
             {"label": "AnyDesk", "icon": "anydesk", "command": ["anydesk"]},
@@ -1784,7 +1785,14 @@ class DetachTests(unittest.TestCase):
         window._launch = Mock()
         window._switch_embedded_window = Mock()
 
-        bar = window._build_detach_bar()
+        bar = window._build_quick_launcher_bar()
+        self.addCleanup(bar.destroy)
+        actions = window._build_detach_bar()
+        self.addCleanup(actions.destroy)
+        self.assertEqual(
+            [child.get_tooltip_text() for child in bar.get_children()],
+            ["AnyDesk", "LocalSend"],
+        )
         buttons = {
             child.get_tooltip_text(): child
             for child in bar.get_children()
@@ -1797,9 +1805,7 @@ class DetachTests(unittest.TestCase):
             label: button.get_child().get_pixel_size()
             for label, button in buttons.items()
         }
-        detach_icon_size = icon_sizes[
-            "Stacca in una finestra sul monitor principale"
-        ]
+        detach_icon_size = window.detach_button.get_child().get_pixel_size()
         self.assertGreater(detach_icon_size, 0)
         self.assertEqual(set(icon_sizes.values()), {detach_icon_size})
         self.assertEqual(
@@ -1818,7 +1824,64 @@ class DetachTests(unittest.TestCase):
             buttons["LocalSend"].get_child().get_icon_name()[0],
             "localsend_app",
         )
-        bar.destroy()
+
+    def test_quick_launchers_are_above_tools_and_actions_inside_the_tool(self):
+        window = self._window()
+        window.config = default_config()
+        window.config["panel"]["resizable"] = False
+        window.config["launcher_groups"] = [{
+            "title": "Tools",
+            "buttons": [{"label": "Shell", "command": ["sh"], "target": "terminal"}],
+        }]
+        window._build_clock = lambda: Gtk.Label(label="Clock")
+        window._build_tray_row = lambda: Gtk.Label(label="Tray")
+        window._build_terminal = lambda _command: Gtk.Box()
+        window._build_session_buttons = lambda: Gtk.Label(label="Session")
+        window._reload_current_page = Mock()
+        window._detach_current_page = Mock()
+
+        root = window._build_content()
+        self.addCleanup(root.destroy)
+        content = root.get_children()[0].get_child().get_child()
+        children = content.get_children()
+        quick_bar = children[2]
+        self.assertEqual(
+            [child.get_tooltip_text() for child in quick_bar.get_children()],
+            [button["label"] for button in window.config["quick_launchers"]],
+        )
+        tools = children[3]
+        self.assertEqual(tools.get_children()[0].get_text(), "Tools")
+        tool_area = children[-2]
+        self.assertIsInstance(tool_area, Gtk.Overlay)
+        self.assertIs(tool_area.get_child(), window.terminal_notebook)
+        actions = window.reload_button.get_parent()
+        self.assertIs(actions.get_parent(), tool_area)
+        self.assertEqual(actions.get_halign(), Gtk.Align.END)
+        self.assertEqual(actions.get_valign(), Gtk.Align.START)
+        self.assertEqual(set(actions.get_children()), {
+            window.reload_button, window.detach_button,
+        })
+        root.show_all()
+        window._refresh_launcher_states()
+        self.assertTrue(window.reload_button.get_sensitive())
+        self.assertTrue(window.detach_button.get_sensitive())
+        window.reload_button.emit("clicked")
+        window.detach_button.emit("clicked")
+        window._reload_current_page.assert_called_once_with()
+        window._detach_current_page.assert_called_once_with()
+
+    def test_empty_quick_launchers_do_not_add_a_row(self):
+        window = self._window()
+        window.config.update(panel={"resizable": False}, terminal={})
+        window._build_clock = lambda: Gtk.Label()
+        window._build_tray_row = lambda: Gtk.Label()
+        window._build_terminal = lambda _command: Gtk.Box()
+        window._build_session_buttons = lambda: Gtk.Label()
+
+        root = window._build_content()
+        self.addCleanup(root.destroy)
+        content = root.get_children()[0].get_child().get_child()
+        self.assertEqual(len(content.get_children()), 4)
 
     def test_detaching_the_last_tab_leaves_the_area_empty(self):
         # Nessuna scheda di rimpiazzo: le linguette sono nascoste, quindi una
