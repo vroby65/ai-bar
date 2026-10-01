@@ -994,6 +994,8 @@ class AiBarWindow(Gtk.Window):
 
         content.pack_start(self._build_clock(), False, False, 0)
         content.pack_start(self._build_tray_row(), False, False, 0)
+        if self.config.get("quick_launchers"):
+            content.pack_start(self._build_quick_launcher_bar(), False, False, 0)
 
         for group in self.config.get("launcher_groups", []):
             internal_buttons = [
@@ -1021,8 +1023,13 @@ class AiBarWindow(Gtk.Window):
             initial_terminal,
             Gtk.Label(label=terminal_tab_label(initial_command)),
         )
-        content.pack_start(self._build_detach_bar(), False, False, 0)
-        content.pack_start(self.terminal_notebook, True, True, 0)
+        tool_area = Gtk.Overlay()
+        tool_area.add(self.terminal_notebook)
+        actions = self._build_detach_bar()
+        actions.set_halign(Gtk.Align.END)
+        actions.set_valign(Gtk.Align.START)
+        tool_area.add_overlay(actions)
+        content.pack_start(tool_area, True, True, 0)
         content.pack_start(self._build_session_buttons(), False, False, 0)
 
         resizable = bool(self.config["panel"].get("resizable", True))
@@ -2576,15 +2583,20 @@ class AiBarWindow(Gtk.Window):
 
         bar.pack_end(detach_button, False, False, 0)
         bar.pack_end(reload_button, False, False, 0)
-        for button_config in reversed(self.config.get("quick_launchers", [])):
-            bar.pack_end(
+        self.detach_button = detach_button
+        self.reload_button = reload_button
+        return bar
+
+    def _build_quick_launcher_bar(self) -> Gtk.Widget:
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        bar.set_halign(Gtk.Align.END)
+        for button_config in self.config.get("quick_launchers", []):
+            bar.pack_start(
                 self._build_quick_launcher_button(button_config),
                 False,
                 False,
                 0,
             )
-        self.detach_button = detach_button
-        self.reload_button = reload_button
         return bar
 
     def _build_quick_launcher_button(self, button_config: dict[str, Any]) -> Gtk.Widget:

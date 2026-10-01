@@ -103,7 +103,7 @@ with `config.example.json` and customize:
   - `url`: opens a web app by URL in an embedded WebKit tab (requires WebKit2; falls back to the system browser with `xdg-open` if it is missing)
 - `launcher_groups[].buttons[].url`: the URL for `target: "url"` buttons
 - `launcher_groups[].buttons[].maximized`: opens the external window maximized
-- `quick_launchers`: ordered mini launch buttons shown next to the current-tool reload button; set it to `[]` to hide the area
+- `quick_launchers`: ordered mini launch buttons shown above the Tools group; set it to `[]` to hide the area
 - `quick_launchers[].integrated`: `true` embeds the GUI application in the panel; `false` (the default) opens it in its own window
 - `terminal.command`: shell or command to open in the embedded terminal
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
@@ -119,7 +119,7 @@ The AI tool launchers open a separate terminal tab for each command. Returning t
 
 AI Bar exports `SUDO_ASKPASS=/usr/local/bin/ai-bar-askpass` to its embedded terminals when the helper is installed. Agent and terminal commands can request the themed graphical password dialog with `sudo -A`; the helper never stores or logs the password. An existing `SUDO_ASKPASS` value is preserved.
 
-A tab can be detached into a window of its own with the button above the content, for when something started in the panel turns into real work. Nothing is restarted: the terminal keeps its process and the page keeps its state, typed text included. Pressing the detach button in the separate window puts the tab back in the panel; closing that window does the same rather than ending the tool. The reload button next to it restarts the current terminal or embedded GUI tool, or reloads the current web app. The panel falls back to the first tab that is left, or to an empty area if that was the only one, and while a tool is detached its launcher button is outlined and clicking it raises the window.
+A tab can be detached into a window of its own with the button inside the top-right corner of the tool area, for when something started in the panel turns into real work. Nothing is restarted: the terminal keeps its process and the page keeps its state, typed text included. Pressing the detach button in the separate window puts the tab back in the panel; closing that window does the same rather than ending the tool. The reload button next to it restarts the current terminal or embedded GUI tool, or reloads the current web app. The panel falls back to the first tab that is left, or to an empty area if that was the only one, and while a tool is detached its launcher button is outlined and clicking it raises the window.
 
 No replacement tab is created to fill the gap. Tab labels are hidden, so a tab that no launcher button owns could never be reached again and its process would keep running out of sight. An embedded GUI window can be detached after ai-bar has captured and embedded its X11 window; until then, the detach button remains disabled. Detaching or reattaching it creates a new `Gtk.Socket` and reparents the same window by XID, without relaunching the process.
 
