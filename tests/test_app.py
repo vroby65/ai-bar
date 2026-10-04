@@ -29,6 +29,8 @@ from ai_bar.app import (
     command_to_shell_line,
     configuration_assistant_command,
     find_window_by_xid,
+    release_x11_window,
+    xlib_display,
     maximize_launched_window,
     centered_position,
     panel_animation_step,
@@ -262,7 +264,7 @@ class ClockLayoutTests(unittest.TestCase):
             screenshot_button,
         ) = status_flow.get_children()
         tray_row = status_area.get_children()[1]
-        tray_flow, macro_recorder_button, spiral_button = tray_row.get_children()
+        tray_flow, spiral_button = tray_row.get_children()
         self.assertIsInstance(assistant_button, Gtk.Button)
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertIsInstance(status_flow, NaturalWrapBox)
@@ -271,13 +273,6 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
         self.assertEqual(display_button.get_tooltip_text(), "Display")
         self.assertEqual(screenshot_button.get_tooltip_text(), "Screenshot")
-        self.assertEqual(
-            macro_recorder_button.get_tooltip_text(), "Avvia Macro Recorder"
-        )
-        self.assertEqual(
-            macro_recorder_button.get_child().get_icon_name()[0],
-            "media-record-symbolic",
-        )
         self.assertEqual(
             spiral_button.get_tooltip_text(), "Affianca le finestre a chiocciola"
         )
@@ -299,8 +294,6 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIs(status_area.get_children()[3], window.window_flow)
         assistant_button.emit("clicked")
         window._open_configuration_assistant.assert_called_once_with()
-        macro_recorder_button.emit("clicked")
-        window._launch.assert_called_once_with(["macro-recorder"])
         spiral_button.emit("clicked")
         window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
@@ -842,6 +835,7 @@ class ClockLayoutTests(unittest.TestCase):
     def test_url_launcher_uses_webview_switch(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window._switch_webview = Mock()
+        window._apply_favicon = Mock()
         window.launcher_buttons = {}
         button = window._build_launcher_button(
             {"label": "Chat", "url": "https://example.com", "target": "url"}
@@ -850,6 +844,39 @@ class ClockLayoutTests(unittest.TestCase):
         button.emit("clicked")
 
         window._switch_webview.assert_called_once_with("https://example.com", "Chat")
+        button.destroy()
+
+    def test_url_launcher_prefers_the_configured_icon(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._switch_webview = Mock()
+        window._apply_favicon = Mock()
+        window.launcher_buttons = {}
+        button = window._build_launcher_button(
+            {
+                "label": "Meteo",
+                "icon": "weather-few-clouds-symbolic",
+                "url": "https://example.com",
+                "target": "url",
+            }
+        )
+
+        image = button.get_child().get_children()[0]
+        self.assertEqual(image.get_icon_name()[0], "weather-few-clouds-symbolic")
+        window._apply_favicon.assert_not_called()
+        button.destroy()
+
+    def test_url_launcher_without_an_icon_uses_the_favicon(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._switch_webview = Mock()
+        window._apply_favicon = Mock()
+        window.launcher_buttons = {}
+        button = window._build_launcher_button(
+            {"label": "Chat", "url": "https://example.com", "target": "url"}
+        )
+
+        image = button.get_child().get_children()[0]
+        self.assertIsInstance(image, Gtk.Image)
+        window._apply_favicon.assert_called_once_with(image, "https://example.com")
         button.destroy()
 
     def test_gui_menu_launcher_uses_configured_command(self):
@@ -1393,6 +1420,7 @@ class ClockLayoutTests(unittest.TestCase):
             patch("ai_bar.app.Gtk.Socket", return_value=socket),
             patch("ai_bar.app.subprocess.Popen", side_effect=launch),
             patch("ai_bar.app.GLib.timeout_add") as timeout_add,
+            patch("ai_bar.app.release_x11_window", return_value=True),
         ):
             window._switch_embedded_window(["menugui"], "App")
             realize_call = socket.connect.call_args.args
@@ -1401,6 +1429,99 @@ class ClockLayoutTests(unittest.TestCase):
 
         socket.add_id.assert_called_once_with(20)
         self.assertEqual(window.embedded_window_xids[key], 20)
+
+    def test_window_manager_releases_window_before_it_is_embedded(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        socket = Mock()
+        key = "window:chrome --app=https://chatgpt.com"
+        launched_window = Mock()
+        launched_window.get_xid.return_value = 20
+        launched_window.is_skip_tasklist.return_value = False
+        window.wnck_screen = Mock()
+        window.wnck_screen.get_windows_stacked.side_effect = ([launched_window], [])
+        window.own_xid = 99
+        window.terminals = {}
+        window.embedded = {key: socket}
+        window.embedded_window_xids = {}
+
+        with (
+            patch("ai_bar.app.GLib.timeout_add") as timeout_add,
+            patch("ai_bar.app.GLib.idle_add") as idle_add,
+            patch(
+                "ai_bar.app.release_x11_window",
+                side_effect=[False, True],
+                create=True,
+            ) as release,
+        ):
+            window._embed_launched_window(socket, set())
+            poll = timeout_add.call_args.args[1]
+            self.assertTrue(poll())
+            socket.add_id.assert_not_called()
+            self.assertNotIn(key, window.embedded_window_xids)
+            self.assertFalse(poll())
+
+        self.assertEqual(release.call_count, 2)
+        release.assert_called_with(20)
+        socket.add_id.assert_called_once_with(20)
+        self.assertEqual(window.embedded_window_xids[key], 20)
+        idle_add.assert_called_once_with(window._focus_embedded_window, socket)
+
+    @unittest.skipIf(X is None, "python-xlib not available")
+    def test_x11_window_release_waits_for_withdrawal_acknowledgement(self):
+        display = xlib_display.Display()
+        self.addCleanup(display.close)
+        root = display.screen().root
+        root.change_attributes(event_mask=X.SubstructureNotifyMask)
+        client = root.create_window(
+            0, 0, 10, 10, 0, X.CopyFromParent, override_redirect=True,
+        )
+        self.addCleanup(client.destroy)
+        state = display.intern_atom("WM_STATE")
+        client.change_property(state, state, 32, [1, 0])
+        client.map()
+        display.sync()
+
+        self.assertFalse(release_x11_window(client.id))
+        self.assertEqual(client.get_attributes().map_state, X.IsUnmapped)
+        events = []
+        while display.pending_events():
+            events.append(display.next_event())
+        self.assertTrue(any(
+            event.type == X.UnmapNotify
+            and event.send_event
+            and event.window.id == client.id
+            for event in events
+        ))
+        client.delete_property(state)
+        display.sync()
+        self.assertTrue(release_x11_window(client.id))
+
+    def test_destroyed_socket_stops_waiting_for_window_release(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        socket = Mock()
+        key = "window:chrome"
+        launched_window = Mock()
+        launched_window.get_xid.return_value = 20
+        launched_window.is_skip_tasklist.return_value = False
+        window.wnck_screen = Mock()
+        window.wnck_screen.get_windows_stacked.return_value = [launched_window]
+        window.own_xid = 99
+        window.terminals = {}
+        window.embedded = {key: socket}
+        window.embedded_window_xids = {}
+
+        with (
+            patch("ai_bar.app.GLib.timeout_add") as timeout_add,
+            patch("ai_bar.app.release_x11_window", return_value=False) as release,
+        ):
+            window._embed_launched_window(socket, set())
+            poll = timeout_add.call_args.args[1]
+            self.assertTrue(poll())
+            window._on_embedded_window_destroyed(socket, key)
+            self.assertFalse(poll())
+
+        release.assert_called_once_with(20)
+        socket.add_id.assert_not_called()
 
     def test_pending_window_tools_do_not_embed_the_same_window(self):
         window = AiBarWindow.__new__(AiBarWindow)
@@ -1422,22 +1543,58 @@ class ClockLayoutTests(unittest.TestCase):
         window.embedded = {first_key: first_socket, second_key: second_socket}
         window.embedded_window_xids = {}
 
-        with patch("ai_bar.app.GLib.timeout_add") as timeout_add:
+        with (
+            patch("ai_bar.app.GLib.timeout_add") as timeout_add,
+            patch("ai_bar.app.release_x11_window", return_value=True),
+        ):
             window._embed_launched_window(first_socket, set())
             first_poll = timeout_add.call_args.args[1]
             window._embed_launched_window(second_socket, set())
             second_poll = timeout_add.call_args.args[1]
 
-        self.assertFalse(first_poll())
-        self.assertTrue(second_poll())
-        visible_windows.append(second_launched_window)
-        self.assertFalse(second_poll())
+            self.assertFalse(first_poll())
+            self.assertTrue(second_poll())
+            visible_windows.append(second_launched_window)
+            self.assertFalse(second_poll())
         first_socket.add_id.assert_called_once_with(20)
         second_socket.add_id.assert_called_once_with(30)
         self.assertEqual(
             window.embedded_window_xids,
             {first_key: 20, second_key: 30},
         )
+
+    def test_pending_withdrawals_do_not_embed_the_same_window(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        first_window, second_window = Mock(), Mock()
+        first_window.get_xid.return_value = 20
+        second_window.get_xid.return_value = 30
+        first_window.is_skip_tasklist.return_value = False
+        second_window.is_skip_tasklist.return_value = False
+        window.wnck_screen = Mock()
+        window.wnck_screen.get_windows_stacked.return_value = [first_window]
+        window.own_xid = 99
+        first_socket, second_socket = Mock(), Mock()
+        window.terminals = {}
+        window.embedded = {"window:first": first_socket, "window:second": second_socket}
+        window.embedded_window_xids = {}
+
+        with (
+            patch("ai_bar.app.GLib.timeout_add") as timeout_add,
+            patch("ai_bar.app.GLib.idle_add"),
+            patch("ai_bar.app.release_x11_window", side_effect=[False, False, True, True]),
+        ):
+            window._embed_launched_window(first_socket, set())
+            first_poll = timeout_add.call_args.args[1]
+            window._embed_launched_window(second_socket, set())
+            second_poll = timeout_add.call_args.args[1]
+            self.assertTrue(first_poll())
+            self.assertTrue(second_poll())
+            self.assertFalse(first_poll())
+            window.wnck_screen.get_windows_stacked.return_value = [second_window]
+            self.assertFalse(second_poll())
+
+        first_socket.add_id.assert_called_once_with(20)
+        second_socket.add_id.assert_called_once_with(30)
 
     def test_destroyed_window_tool_is_not_reused(self):
         window = AiBarWindow.__new__(AiBarWindow)

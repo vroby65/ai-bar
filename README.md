@@ -113,7 +113,7 @@ The default display button opens MATE's display settings (`mate-display-properti
 
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
 
-The recording button beside the small grid button launches `macro-recorder`. The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
+The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
 
 The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. Tabs are hidden, so the button that opened the page on screen stays highlighted, the same way the window list marks the active window. `window` and `url` buttons work the same way: the app or web app is embedded in its own tab and keeps running while you switch to another tab. Web apps keep cookies and site data across restarts, and while a web tab is active you can use `Ctrl++` or `Ctrl+=` to zoom in and `Ctrl+-` to zoom out. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
 
@@ -123,11 +123,17 @@ A tab can be detached into a window of its own with the button inside the top-ri
 
 No replacement tab is created to fill the gap. Tab labels are hidden, so a tab that no launcher button owns could never be reached again and its process would keep running out of sight. An embedded GUI window can be detached after ai-bar has captured and embedded its X11 window; until then, the detach button remains disabled. Detaching or reattaching it creates a new `Gtk.Socket` and reparents the same window by XID, without relaunching the process.
 
-Web app buttons take their icon from the site's favicon once the site has been opened, and fall back to the configured `icon` when the site has none. Icons that WebKit cannot decode itself — SVG favicons, for instance — are fetched from the site and decoded with GdkPixbuf, then cached under `ai-bar/webkit/icons` so the button keeps the icon across restarts.
+Web app buttons use the configured `icon` when present; otherwise they take their icon from the site's favicon once the site has been opened. Icons that WebKit cannot decode itself — SVG favicons, for instance — are fetched from the site and decoded with GdkPixbuf, then cached under `ai-bar/webkit/icons` so the button keeps the icon across restarts.
 
 Login forms in a web app can be filled from the system keyring. Nothing is stored until you log in yourself: the first time you submit a login form, ai-bar asks whether to keep the credentials, and only then writes them to the keyring — never to `config.json`. They are filled in again only while the page is still on the same origin as the configured `url`, and the form is never submitted for you. Without `gir1.2-secret-1` and a running keyring, or if you decline, the feature stays out of the way.
 
 Embedding GUI programs (`target: "window"`) re-parents the program's first window into the panel using `Gtk.Socket` and libwnck. It is best effort: single-window GTK applications work well, but some programs do not tolerate being embedded (the decoration frame may remain, or the window may stay on the desktop); in that case the launcher still opens the program on the desktop. Web apps (`target: "url"`) require the `gir1.2-webkit2-4.1` package, installed by `install.sh`.
+
+AI-bar waits for the window manager to release a GUI window before embedding it,
+so Openbox cannot move Chrome app windows back out of the panel during insertion.
+For ChatGPT login with a YubiKey, use Chrome's `--app=https://chatgpt.com` with
+`target: "window"` and your existing browser profile; the embedded WebKitGTK URL
+view does not currently support WebAuthn security keys.
 
 Web views run without accelerated compositing by default. On drivers where the GBM buffer allocation fails — the proprietary NVIDIA driver, for one — WebKit does not fall back on its own and the view stays blank, with `Failed to create GBM buffer` in the session log and nothing at all in the interface. On a view the width of a panel, software rendering costs little; a failure nobody can diagnose costs a lot. Set `webview.hardware_acceleration` to `on-demand` to get WebKit's own behaviour back, or to `always`.
 

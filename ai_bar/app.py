@@ -49,12 +49,13 @@ except Exception:  # pragma: no cover - exercised only on systems without Secret
 try:
     from Xlib import X, XK, display as xlib_display
     from Xlib.ext import record
-    from Xlib.protocol import rq
+    from Xlib.protocol import event as xlib_event, rq
 except Exception:  # pragma: no cover - exercised only on systems without python-xlib.
     X = None
     XK = None
     xlib_display = None
     record = None
+    xlib_event = None
     rq = None
 
 from .config import ConfigError, default_config, default_config_path, load_config
@@ -320,6 +321,30 @@ def focus_x11_window(xid: int) -> bool:
     finally:
         if display is not None:
             display.close()
+
+
+def release_x11_window(xid: int) -> bool:
+    if X is None or xlib_display is None:
+        return True
+
+    display = xlib_display.Display()
+    try:
+        window = display.create_resource_object("window", xid)
+        state = window.get_full_property(display.intern_atom("WM_STATE"), X.AnyPropertyType)
+        if state is None:
+            return True
+        # Withdraw the toplevel and let its window manager remove the frame
+        # before Gtk.Socket reparents it. Otherwise Openbox can undo the embed.
+        root = display.screen().root
+        window.unmap()
+        root.send_event(
+            xlib_event.UnmapNotify(event=root, window=window, from_configure=False),
+            event_mask=X.SubstructureNotifyMask | X.SubstructureRedirectMask,
+        )
+        display.flush()
+        return False
+    finally:
+        display.close()
 
 
 def centered_position(area: Any, width: int, height: int) -> tuple[int, int]:
@@ -1110,7 +1135,6 @@ class AiBarWindow(Gtk.Window):
         tray_row.get_style_context().add_class("tray-row")
         tray_row.pack_start(tray_flow, True, True, 0)
         tray_row.pack_end(self._build_spiral_tile_button(), False, False, 0)
-        tray_row.pack_end(self._build_macro_recorder_button(), False, False, 0)
 
         self.window_flow = Gtk.FlowBox()
         self.window_flow.get_style_context().add_class("window-flow")
@@ -1245,17 +1269,6 @@ class AiBarWindow(Gtk.Window):
         image.set_pixel_size(16)
         button.add(image)
         button.connect("clicked", self._tile_windows_spiral)
-        return button
-
-    def _build_macro_recorder_button(self) -> Gtk.Widget:
-        button = Gtk.Button()
-        button.get_style_context().add_class("tray-icon-cell")
-        button.set_relief(Gtk.ReliefStyle.NONE)
-        button.set_tooltip_text("Avvia Macro Recorder")
-        image = Gtk.Image.new_from_icon_name("media-record-symbolic", Gtk.IconSize.MENU)
-        image.set_pixel_size(16)
-        button.add(image)
-        button.connect("clicked", lambda _button: self._launch(["macro-recorder"]))
         return button
 
     def _open_configuration_assistant(self) -> None:
@@ -1620,9 +1633,14 @@ class AiBarWindow(Gtk.Window):
         icon_name = button_config.get("icon")
         if icon_name:
             image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.DIALOG)
+        elif target == "url":
+            image = Gtk.Image()
+        else:
+            image = None
+        if image is not None:
             image.set_pixel_size(24)
             inner.pack_start(image, False, False, 0)
-            if target == "url":
+            if target == "url" and not icon_name:
                 self._apply_favicon(image, str(button_config.get("url", "")))
 
         if show_label:
@@ -2460,30 +2478,39 @@ class AiBarWindow(Gtk.Window):
         if key is None:
             return
         attempts_remaining = EMBED_POLL_ATTEMPTS
+        pending_xid = None
 
         def embed_when_ready() -> bool:
-            nonlocal attempts_remaining
+            nonlocal attempts_remaining, pending_xid
+            if self.embedded.get(key) is not socket:
+                return False
             try:
                 self.wnck_screen.force_update()
-                for window in self.wnck_screen.get_windows_stacked():
-                    xid = int(window.get_xid())
-                    if (
-                        xid != self.own_xid
-                        and xid not in existing_xids
-                        and xid not in self.embedded_window_xids.values()
-                        and not window.is_skip_tasklist()
-                    ):
-                        self.embedded_window_xids[key] = xid
-                        try:
-                            socket.add_id(xid)
-                        except Exception:
-                            self.embedded_window_xids.pop(key, None)
-                            raise
-                        detach_button = getattr(self, "detach_button", None)
-                        if detach_button is not None:
-                            detach_button.set_sensitive(True)
-                        GLib.idle_add(self._focus_embedded_window, socket)
-                        return False
+                if pending_xid in self.embedded_window_xids.values():
+                    pending_xid = None
+                if pending_xid is None:
+                    for window in self.wnck_screen.get_windows_stacked():
+                        xid = int(window.get_xid())
+                        if (
+                            xid != self.own_xid
+                            and xid not in existing_xids
+                            and xid not in self.embedded_window_xids.values()
+                            and not window.is_skip_tasklist()
+                        ):
+                            pending_xid = xid
+                            break
+                if pending_xid is not None and release_x11_window(pending_xid):
+                    self.embedded_window_xids[key] = pending_xid
+                    try:
+                        socket.add_id(pending_xid)
+                    except Exception:
+                        self.embedded_window_xids.pop(key, None)
+                        raise
+                    detach_button = getattr(self, "detach_button", None)
+                    if detach_button is not None:
+                        detach_button.set_sensitive(True)
+                    GLib.idle_add(self._focus_embedded_window, socket)
+                    return False
             except Exception as exc:
                 print(f"ai-bar: finestra non incorporata: {exc}", file=sys.stderr)
                 return False
