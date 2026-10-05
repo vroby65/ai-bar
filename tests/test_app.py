@@ -39,6 +39,7 @@ from ai_bar.app import (
     place_window,
     panel_x_for_state,
     webkit_cookie_storage_path,
+    webkit_cache_directory,
     launcher_page_key,
     favicon_cache_path,
     launcher_application_id,
@@ -1096,26 +1097,43 @@ class ClockLayoutTests(unittest.TestCase):
             )
 
     @patch("ai_bar.app.WebKit2")
-    def test_webview_persistence_uses_a_persistent_cookie_store(self, webkit2):
-        with patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/xdg-data"}):
+    def test_webview_persistence_uses_a_persistent_site_data_manager(self, webkit2):
+        with patch.dict(os.environ, {
+            "XDG_DATA_HOME": "/tmp/xdg-data",
+            "XDG_CACHE_HOME": "/tmp/xdg-cache",
+        }):
             expected_path = Path("/tmp/xdg-data/ai-bar/webkit/cookies.sqlite")
 
             context = Mock()
             data_manager = Mock()
             cookie_manager = Mock()
-            webkit2.WebContext.get_default.return_value = context
-            context.get_website_data_manager.return_value = data_manager
+            webkit2.WebsiteDataManager.return_value = data_manager
+            webkit2.WebContext.new_with_website_data_manager.return_value = context
             data_manager.get_cookie_manager.return_value = cookie_manager
 
             window = AiBarWindow.__new__(AiBarWindow)
             window.web_context = None
-            window._configure_webkit_cookie_persistence()
+            window._configure_webkit_persistence()
 
+            webkit2.WebsiteDataManager.assert_called_once_with(
+                base_data_directory="/tmp/xdg-data/ai-bar",
+                base_cache_directory="/tmp/xdg-cache/ai-bar",
+            )
+            webkit2.WebContext.new_with_website_data_manager.assert_called_once_with(
+                data_manager
+            )
             cookie_manager.set_persistent_storage.assert_called_once_with(
                 str(expected_path),
                 webkit2.CookiePersistentStorage.SQLITE,
             )
             self.assertIs(window.web_context, context)
+
+    def test_webkit_cache_directory_uses_xdg_cache_home(self):
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": "/tmp/xdg-cache"}):
+            self.assertEqual(
+                webkit_cache_directory(),
+                Path("/tmp/xdg-cache/ai-bar"),
+            )
 
     @patch("ai_bar.app.WebKit2")
     def test_url_launcher_reuses_the_shared_webkit_context(self, webkit2):

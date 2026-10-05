@@ -253,6 +253,12 @@ def webkit_data_directory() -> Path:
     return root / "ai-bar" / "webkit"
 
 
+def webkit_cache_directory() -> Path:
+    cache_home = os.environ.get("XDG_CACHE_HOME")
+    root = Path(cache_home) if cache_home else Path.home() / ".cache"
+    return root / "ai-bar"
+
+
 def webkit_cookie_storage_path() -> Path:
     return webkit_data_directory() / "cookies.sqlite"
 
@@ -971,7 +977,7 @@ class AiBarWindow(Gtk.Window):
         self.launch_monitor_warning_shown = False
         self.resize_drag: tuple[int, float] | None = None
 
-        self._configure_webkit_cookie_persistence()
+        self._configure_webkit_persistence()
 
         panel = self.config["panel"]
         self.set_name("ai-bar")
@@ -991,12 +997,21 @@ class AiBarWindow(Gtk.Window):
         self.add(self._build_content())
         self.show_all()
 
-    def _configure_webkit_cookie_persistence(self) -> None:
+    def _configure_webkit_persistence(self) -> None:
         if WebKit2 is None:
             return
 
-        self.web_context = WebKit2.WebContext.get_default()
-        cookie_manager = self.web_context.get_website_data_manager().get_cookie_manager()
+        data_directory = webkit_data_directory().parent
+        cache_directory = webkit_cache_directory()
+        data_directory.mkdir(parents=True, exist_ok=True)
+        cache_directory.mkdir(parents=True, exist_ok=True)
+        data_manager = WebKit2.WebsiteDataManager(
+            base_data_directory=str(data_directory),
+            base_cache_directory=str(cache_directory),
+        )
+        self.web_context = WebKit2.WebContext.new_with_website_data_manager(
+            data_manager)
+        cookie_manager = data_manager.get_cookie_manager()
         cookie_path = webkit_cookie_storage_path()
         cookie_path.parent.mkdir(parents=True, exist_ok=True)
         cookie_manager.set_persistent_storage(
