@@ -60,7 +60,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "icon": "camera-photo-symbolic",
                 "command": [
                     "/usr/bin/mate-screenshot",
-                    "--interactive",
+                    "--area",
                 ],
                 "icon_only": True,
             },

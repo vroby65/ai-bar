@@ -50,6 +50,10 @@ class PackagingTests(unittest.TestCase):
 
         self.assertIn("    yad\n", installer)
 
+    def test_installer_provides_screen_recording_dependency(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn("    ffmpeg\n", installer)
+
     def test_installer_provides_mate_display_settings(self):
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
 
@@ -93,6 +97,10 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(shipped_config["panel"]["side"], "left")
         self.assertEqual(
             shipped_config["tray"]["items"][1]["command"], ["mate-display-properties"]
+        )
+        self.assertEqual(
+            shipped_config["tray"]["items"][2]["command"],
+            ["/usr/bin/mate-screenshot", "--area"],
         )
         self.assertEqual(shipped_config["launcher_groups"][1]["title"], "Tools")
         self.assertIn(

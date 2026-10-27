@@ -14,7 +14,7 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Vte", "2.91")
 
-from gi.repository import Gdk, GdkPixbuf, Gtk, Vte
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Vte
 
 from ai_bar.app import (
     AiBarWindow,
@@ -57,6 +57,191 @@ from ai_bar.app import (
 )
 from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 from ai_bar.config import default_config
+
+
+class ScreenRecordingTests(unittest.TestCase):
+    def setUp(self):
+        self.window = AiBarWindow.__new__(AiBarWindow)
+        self.window.recording_process = None
+        self.window.recording_path = None
+        self.window.recording_stopping = False
+        self.window._show_error = Mock()
+        self.window._monitor_geometry = Mock(return_value=SimpleNamespace(
+            x=1920, y=0, width=1080, height=1920))
+        self.button = self.window._build_screen_recording_button()
+        self.addCleanup(self.button.destroy)
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        patcher = patch("ai_bar.app.GLib.get_user_special_dir", return_value=self.temporary.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch("ai_bar.app.Gio.Subprocess.new")
+    @patch.dict(os.environ, {"DISPLAY": ":7", "XDG_SESSION_TYPE": "x11"})
+    def test_click_starts_recording_and_second_click_stops_then_saves(self, spawn):
+        process = spawn.return_value
+        self.button.clicked()
+        argv, flags = spawn.call_args.args
+        self.assertEqual(argv[0], "ffmpeg")
+        self.assertEqual(argv[argv.index("-video_size") + 1], "1080x1920")
+        self.assertEqual(argv[argv.index("-i") + 1], ":7+1920,0")
+        self.assertEqual(argv[argv.index("-framerate") + 1], "30")
+        self.assertEqual(Path(argv[-1]).parent, Path(self.temporary.name) / "Registrazioni")
+        self.assertEqual(Path(argv[-1]).suffix, ".mp4")
+        self.assertFalse(flags & Gio.SubprocessFlags.STDIN_PIPE)
+        self.assertTrue(self.button.get_style_context().has_class("recording"))
+        self.assertEqual(self.button.get_tooltip_text(), "Ferma e salva la registrazione")
+        self.button.clicked()
+        process.send_signal.assert_called_once_with(signal.SIGINT)
+        self.assertFalse(self.button.get_sensitive())
+        self.assertIs(self.window.recording_process, process)
+        process.communicate_utf8_finish.return_value = (True, None, "")
+        process.get_successful.return_value = False
+        process.get_if_exited.return_value = True
+        process.get_exit_status.return_value = 255
+        callback = process.communicate_utf8_async.call_args.args[2]
+        callback(process, Mock())
+        self.assertIsNone(self.window.recording_process)
+        self.assertTrue(self.button.get_sensitive())
+        self.assertFalse(self.button.get_style_context().has_class("recording"))
+        self.assertIn(argv[-1], self.button.get_tooltip_text())
+        self.window._show_error.assert_not_called()
+
+    @patch("ai_bar.app.Gio.Subprocess.new", side_effect=GLib.Error("ffmpeg assente"))
+    def test_launch_error_leaves_button_ready(self, spawn):
+        self.button.clicked()
+        self.assertIsNone(self.window.recording_process)
+        self.assertTrue(self.button.get_sensitive())
+        self.assertFalse(self.button.get_style_context().has_class("recording"))
+        self.window._show_error.assert_called_once()
+
+    @patch("ai_bar.app.Gio.Subprocess.new")
+    def test_encoder_failure_is_reported_and_allows_retry(self, spawn):
+        process = spawn.return_value
+        self.button.clicked()
+        process.communicate_utf8_finish.return_value = (True, None, "Cannot open display")
+        process.get_successful.return_value = False
+        callback = process.communicate_utf8_async.call_args.args[2]
+        callback(process, Mock())
+        self.assertIsNone(self.window.recording_process)
+        self.assertEqual(self.button.get_tooltip_text(), "Registra lo schermo")
+        self.window._show_error.assert_called_once()
+        self.assertIn("Cannot open display", self.window._show_error.call_args.args[0])
+
+    @patch("ai_bar.app.Gio.Subprocess.new")
+    def test_shutdown_stops_and_waits_for_video_finalization(self, spawn):
+        self.button.clicked()
+        process = spawn.return_value
+        self.window._stop_screen_recording(wait=True)
+        process.send_signal.assert_called_once_with(signal.SIGINT)
+        process.wait.assert_called_once_with(None)
+        self.assertIsNone(self.window.recording_process)
+
+    @patch("ai_bar.app.os.execvp")
+    @patch("ai_bar.app.Gtk.main_quit")
+    def test_reload_and_destroy_finalize_the_recording(self, quit_main, execvp):
+        window = SimpleNamespace(
+            _stop_screen_recording=Mock(), xapp_tray_host=None, tray_host=None,
+            volume_update_timeout_id=None, panel_animation_id=None,
+            window_list_poll_id=None, super_toggle=None)
+        AiBarWindow._reload(window)
+        window._stop_screen_recording.assert_called_once_with(wait=True)
+        execvp.assert_called_once()
+        window._stop_screen_recording.reset_mock()
+        AiBarWindow._on_destroy(window, window)
+        window._stop_screen_recording.assert_called_once_with(wait=True)
+        quit_main.assert_called_once_with()
+
+    @patch("ai_bar.app.Gio.Subprocess.new")
+    @patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"})
+    def test_wayland_reports_unsupported_capture(self, spawn):
+        self.button.clicked()
+        spawn.assert_not_called()
+        self.window._show_error.assert_called_once()
+
+
+class KeyboardNavigationTests(unittest.TestCase):
+    def setUp(self):
+        self.window = AiBarWindow.__new__(AiBarWindow)
+        Gtk.Window.__init__(self.window)
+        self.addCleanup(self.window.destroy)
+        self.window.connect("key-press-event", self.window._on_key_press)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.window.add(box)
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_min_children_per_line(2)
+        flow.set_max_children_per_line(2)
+        self.buttons = [Gtk.Button(label=str(i)) for i in range(4)]
+        for button in self.buttons:
+            self.window._add_flow_child(flow, button)
+        self.window.window_flow = flow
+        box.pack_start(flow, False, False, 0)
+        self.last = Gtk.Button(label="Other group")
+        box.pack_start(self.last, False, False, 0)
+        self.entry = Gtk.Entry()
+        box.pack_start(self.entry, False, False, 0)
+        self.terminal = Vte.Terminal()
+        notebook = Gtk.Notebook()
+        notebook.append_page(self.terminal, Gtk.Label(label="Terminal"))
+        box.pack_start(notebook, True, True, 0)
+        self.window.show_all()
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+
+    def press(self, key, state=0):
+        event = Gdk.Event.new(Gdk.EventType.KEY_PRESS)
+        event.keyval = key
+        event.state = state
+        return self.window.emit("key-press-event", event)
+
+    def test_arrows_follow_button_positions_and_cross_groups(self):
+        self.buttons[0].grab_focus()
+        for key, target in (
+            (Gdk.KEY_Right, self.buttons[1]),
+            (Gdk.KEY_Down, self.buttons[3]),
+            (Gdk.KEY_Left, self.buttons[2]),
+            (Gdk.KEY_Up, self.buttons[0]),
+            (Gdk.KEY_Down, self.buttons[2]),
+            (Gdk.KEY_Down, self.last),
+        ):
+            self.assertTrue(self.press(key))
+            self.assertIs(self.window.get_focus(), target)
+
+    def test_enter_activates_selected_button_once(self):
+        clicked = Mock()
+        self.buttons[1].connect("clicked", clicked)
+        self.buttons[1].grab_focus()
+        for key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            clicked.reset_mock()
+            self.assertTrue(self.press(key))
+            clicked.assert_called_once_with(self.buttons[1])
+
+    def test_disabled_and_hidden_buttons_are_skipped(self):
+        self.buttons[2].set_sensitive(False)
+        self.buttons[3].hide()
+        self.buttons[0].grab_focus()
+        self.assertTrue(self.press(Gdk.KEY_Down))
+        self.assertIs(self.window.get_focus(), self.last)
+        self.assertTrue(self.press(Gdk.KEY_Down))
+        self.assertIs(self.window.get_focus(), self.last)
+
+    def test_editing_widgets_keep_their_keys(self):
+        for widget in (self.entry, self.terminal):
+            widget.grab_focus()
+            for key in (Gdk.KEY_Left, Gdk.KEY_Down, Gdk.KEY_Return):
+                event = SimpleNamespace(keyval=key, state=0)
+                self.assertFalse(self.window._on_key_press(self.window, event))
+                self.assertIs(self.window.get_focus(), widget)
+
+    def test_opening_panel_focuses_dock_without_launching(self):
+        clicked = Mock()
+        self.buttons[0].connect("clicked", clicked)
+        self.terminal.grab_focus()
+        self.assertFalse(self.window._focus_panel_controls())
+        self.assertIs(self.window.get_focus(), self.buttons[0])
+        self.assertTrue(self.window.get_focus_visible())
+        clicked.assert_not_called()
 
 
 class ClockLayoutTests(unittest.TestCase):
@@ -219,7 +404,7 @@ class ClockLayoutTests(unittest.TestCase):
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_status_items_follow_configuration_and_stay_out_of_tray(
+    def test_status_row_has_no_preferences_and_tiling_is_the_rightmost_tool(
         self,
         _xapp_host,
         _xembed_host,
@@ -251,27 +436,21 @@ class ClockLayoutTests(unittest.TestCase):
         window.volume_controls = []
         window.tray_host = None
         window.xapp_tray_host = None
-        window._open_configuration_assistant = Mock()
         window._tile_windows_spiral = Mock()
         window._launch = Mock()
 
         status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
-        (
-            assistant_button,
-            volume_control,
-            display_button,
-            screenshot_button,
-        ) = status_flow.get_children()
+        volume_control, display_button = status_flow.get_children()
         tray_row = status_area.get_children()[1]
-        tray_flow, spiral_button = tray_row.get_children()
-        self.assertIsInstance(assistant_button, Gtk.Button)
+        tray_flow, tools = tray_row.get_children()
+        screenshot_button, record_button, spiral_button = tools.get_children()
+        self.assertEqual(record_button.get_tooltip_text(), "Registra lo schermo")
+        self.assertTrue(screenshot_button.get_style_context().has_class("tray-icon-cell"))
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertIsInstance(status_flow, NaturalWrapBox)
         self.assertFalse(volume_control.get_hexpand())
-        self.assertNotIn(assistant_button, volume_control.get_children())
-        self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
         self.assertEqual(display_button.get_tooltip_text(), "Display")
         self.assertEqual(screenshot_button.get_tooltip_text(), "Screenshot")
         self.assertEqual(
@@ -293,13 +472,11 @@ class ClockLayoutTests(unittest.TestCase):
             separator.get_style_context().has_class("tray-window-separator")
         )
         self.assertIs(status_area.get_children()[3], window.window_flow)
-        assistant_button.emit("clicked")
-        window._open_configuration_assistant.assert_called_once_with()
         spiral_button.emit("clicked")
         window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
 
-    def test_legacy_screenshot_button_opens_the_interactive_menu(self):
+    def test_legacy_screenshot_button_starts_area_selection(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window._launch = Mock()
         button = window._build_status_button(
@@ -316,7 +493,7 @@ class ClockLayoutTests(unittest.TestCase):
         button.emit("clicked")
 
         window._launch.assert_called_once_with(
-            ["/usr/bin/mate-screenshot", "--interactive"]
+            ["/usr/bin/mate-screenshot", "--area"]
         )
         button.destroy()
 

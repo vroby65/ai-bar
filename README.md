@@ -66,6 +66,12 @@ python3 -m ai_bar --config config.example.json
 
 The editable installation loads Python code directly from this checkout. After a code change, use the `Reload` button to test it without running the installer again.
 
+For keyboard navigation, reopen the panel with Super: the first window-dock
+button receives focus. Use the arrow keys to move between buttons in their
+on-screen direction, and Enter to activate the highlighted button. A yellow
+outline marks keyboard focus. Terminal and text input keys keep their normal
+behavior; to return to the buttons, hide and reopen the panel with Super.
+
 By default, left-click the date or time at the top of the panel to open Google Calendar in Google Chrome (`google-chrome`). Set `clock.command` to change this action or disable it with `null`.
 
 ## Configuration
@@ -109,11 +115,16 @@ with `config.example.json` and customize:
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
-The default display button opens MATE's display settings (`mate-display-properties`). The default screenshot button opens MATE Screenshot's interactive menu, where you can choose the capture mode and options.
-
-The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
+The default display button opens MATE's display settings (`mate-display-properties`). The default screenshot button immediately starts MATE Screenshot's area selector.
 
 The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
+
+The tools are ordered left to right: screenshot, recording, and window tiling.
+The recording button starts recording the panel monitor on X11, at 30 fps without audio. It
+turns red while recording; click it again to stop and save an MP4 in
+`Registrazioni` inside your Videos folder. Its tooltip shows the saved path.
+Reloading or closing AI-bar also stops and finalizes the video. Recording requires
+FFmpeg, included in the installer.
 
 The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. Tabs are hidden, so the button that opened the page on screen stays highlighted, the same way the window list marks the active window. `window` and `url` buttons work the same way: the app or web app is embedded in its own tab and keeps running while you switch to another tab. Web apps keep cookies and site data across restarts, and while a web tab is active you can use `Ctrl++` or `Ctrl+=` to zoom in and `Ctrl+-` to zoom out. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
 

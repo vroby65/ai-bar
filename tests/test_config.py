@@ -104,7 +104,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["tray"]["items"][1]["command"], ["mate-display-properties"])
         self.assertEqual(
             config["tray"]["items"][2]["command"],
-            ["/usr/bin/mate-screenshot", "--interactive"],
+            ["/usr/bin/mate-screenshot", "--area"],
         )
         self.assertEqual(
             [button["label"] for button in config["session_buttons"]],

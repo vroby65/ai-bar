@@ -736,6 +736,13 @@ button:hover {
   border-color: rgba(255, 255, 255, 0.48);
 }
 
+#ai-bar button:focus {
+  outline-color: #ffea00;
+  outline-style: solid;
+  outline-width: 2px;
+  outline-offset: -3px;
+}
+
 button:active,
 button:checked {
   border-color: rgba(0, 0, 0, 0.42);
@@ -930,6 +937,13 @@ button.tray-icon-cell:checked {
   background: #4c8f72;
 }
 
+button.tray-icon-cell.recording,
+button.tray-icon-cell.recording:hover,
+button.tray-icon-cell.recording:active {
+  background-color: #c62828;
+  color: #ffffff;
+}
+
 .session-row {
   border-top: 1px solid #303638;
   padding-top: 8px;
@@ -947,6 +961,9 @@ class AiBarWindow(Gtk.Window):
         self.xapp_tray_host: XAppStatusIconHost | None = None
         self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
         self.volume_controls: list[tuple[Gtk.Scale, Gtk.Label, Gtk.Image]] = []
+        self.recording_process: Gio.Subprocess | None = None
+        self.recording_path: Path | None = None
+        self.recording_stopping = False
         self.volume_percent = 0
         self.volume_muted = False
         self.volume_should_unmute = False
@@ -1124,8 +1141,8 @@ class AiBarWindow(Gtk.Window):
         status_flow.set_direction(Gtk.TextDirection.LTR)
 
         for item in self.config.get("tray", {}).get("items", []):
-            if item.get("type") == "volume":
-                status_flow.add(self._build_configuration_assistant_button())
+            if item.get("type") == "screenshot":
+                continue
             status_flow.add(self._build_status_button(item))
 
         tray_flow = Gtk.FlowBox()
@@ -1149,7 +1166,14 @@ class AiBarWindow(Gtk.Window):
         tray_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tray_row.get_style_context().add_class("tray-row")
         tray_row.pack_start(tray_flow, True, True, 0)
-        tray_row.pack_end(self._build_spiral_tile_button(), False, False, 0)
+        tools = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tools.set_direction(Gtk.TextDirection.LTR)
+        for item in self.config.get("tray", {}).get("items", []):
+            if item.get("type") == "screenshot":
+                tools.pack_start(self._build_status_button(item, compact=True), False, False, 0)
+        tools.pack_start(self._build_screen_recording_button(), False, False, 0)
+        tools.pack_start(self._build_spiral_tile_button(), False, False, 0)
+        tray_row.pack_end(tools, False, False, 0)
 
         self.window_flow = Gtk.FlowBox()
         self.window_flow.get_style_context().add_class("window-flow")
@@ -1181,28 +1205,32 @@ class AiBarWindow(Gtk.Window):
         flow.insert(child, -1)
         return child
 
-    def _build_status_button(self, item: dict[str, Any]) -> Gtk.Widget:
+    def _build_status_button(self, item: dict[str, Any], compact: bool = False) -> Gtk.Widget:
         if item.get("type") == "volume":
             return self._build_volume_control(item)
 
         button = Gtk.Button()
-        button.get_style_context().add_class("status-button")
+        button.get_style_context().add_class("tray-icon-cell" if compact else "status-button")
         color_index = {
             "display": 5,
             "screenshot": 1,
             "wifi": 2,
         }.get(str(item.get("type", "")), 4)
-        add_accent_color(button, color_index)
+        if not compact:
+            add_accent_color(button, color_index)
         button.set_tooltip_text(str(item.get("label", "")))
         button.set_relief(Gtk.ReliefStyle.NONE)
 
         inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         icon_name = item.get("icon")
         if icon_name:
-            image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.BUTTON)
+            image = Gtk.Image.new_from_icon_name(
+                str(icon_name), Gtk.IconSize.MENU if compact else Gtk.IconSize.BUTTON)
+            if compact:
+                image.set_pixel_size(16)
             inner.pack_start(image, False, False, 0)
 
-        if not item.get("icon_only", False):
+        if not compact and not item.get("icon_only", False):
             label = Gtk.Label(label=str(item.get("label", "")))
             label.set_ellipsize(Pango.EllipsizeMode.END)
             label.set_max_width_chars(14)
@@ -1216,7 +1244,7 @@ class AiBarWindow(Gtk.Window):
             "/usr/bin/mate-screenshot",
             "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png",
         ]:
-            command = ["/usr/bin/mate-screenshot", "--interactive"]
+            command = ["/usr/bin/mate-screenshot", "--area"]
         if command:
             button.connect("clicked", lambda _button: self._launch(command))
 
@@ -1265,16 +1293,6 @@ class AiBarWindow(Gtk.Window):
         self.volume_controls.append((scale, label, icon))
         return control
 
-    def _build_configuration_assistant_button(self) -> Gtk.Widget:
-        button = Gtk.Button()
-        button.get_style_context().add_class("status-button")
-        add_accent_color(button, 3)
-        button.set_relief(Gtk.ReliefStyle.NONE)
-        button.set_tooltip_text("Configura AI-bar con un agente")
-        button.add(Gtk.Image.new_from_icon_name("document-edit-symbolic", Gtk.IconSize.MENU))
-        button.connect("clicked", lambda _button: self._open_configuration_assistant())
-        return button
-
     def _build_spiral_tile_button(self) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("tray-icon-cell")
@@ -1285,6 +1303,82 @@ class AiBarWindow(Gtk.Window):
         button.add(image)
         button.connect("clicked", self._tile_windows_spiral)
         return button
+
+    def _build_screen_recording_button(self) -> Gtk.Widget:
+        self.recording_button = Gtk.Button()
+        self.recording_button.get_style_context().add_class("tray-icon-cell")
+        self.recording_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.recording_button.set_tooltip_text("Registra lo schermo")
+        self.recording_button.add(Gtk.Image.new_from_icon_name(
+            "media-record-symbolic", Gtk.IconSize.MENU))
+        self.recording_button.connect("clicked", self._toggle_screen_recording)
+        return self.recording_button
+
+    def _toggle_screen_recording(self, _button: Gtk.Button) -> None:
+        if self.recording_process is not None:
+            self._stop_screen_recording()
+            return
+        if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            self._show_error("La registrazione dello schermo richiede una sessione X11.")
+            return
+        geometry = self._monitor_geometry()
+        video_directory = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS)
+        directory = Path(video_directory or Path.home() / "Videos") / "Registrazioni"
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            self.recording_path = directory / f"Schermo_{datetime.now():%Y-%m-%d_%H-%M-%S_%f}.mp4"
+            self.recording_process = Gio.Subprocess.new([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-n",
+                "-f", "x11grab", "-framerate", "30",
+                "-video_size", f"{geometry.width}x{geometry.height}",
+                "-i", f"{os.environ.get('DISPLAY', ':0')}+{geometry.x},{geometry.y}",
+                "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p",
+                str(self.recording_path),
+            ], Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+        except (GLib.Error, OSError) as exc:
+            self._show_error(f"Impossibile avviare la registrazione: {exc}")
+            return
+        self.recording_stopping = False
+        self.recording_button.get_style_context().add_class("recording")
+        self.recording_button.get_child().set_from_icon_name(
+            "media-playback-stop-symbolic", Gtk.IconSize.MENU)
+        self.recording_button.set_tooltip_text("Ferma e salva la registrazione")
+        self.recording_process.communicate_utf8_async(None, None, self._screen_recording_finished)
+
+    def _stop_screen_recording(self, wait: bool = False) -> None:
+        process = self.recording_process
+        if process is None:
+            return
+        if not self.recording_stopping:
+            self.recording_stopping = True
+            process.send_signal(signal.SIGINT)
+            self.recording_button.set_sensitive(False)
+            self.recording_button.set_tooltip_text("Salvataggio della registrazione…")
+        if wait:
+            process.wait(None)
+            self.recording_process = None
+
+    def _screen_recording_finished(self, process: Gio.Subprocess, result: Gio.AsyncResult) -> None:
+        try:
+            _ok, _stdout, error = process.communicate_utf8_finish(result)
+            success = process.get_successful() or (
+                self.recording_stopping and process.get_if_exited()
+                and process.get_exit_status() == 255)
+        except GLib.Error as exc:
+            success, error = False, str(exc)
+        if process is not self.recording_process:
+            return
+        self.recording_process = None
+        self.recording_stopping = False
+        self.recording_button.set_sensitive(True)
+        self.recording_button.get_style_context().remove_class("recording")
+        self.recording_button.get_child().set_from_icon_name("media-record-symbolic", Gtk.IconSize.MENU)
+        self.recording_button.set_tooltip_text(
+            f"Video salvato: {self.recording_path}\nClicca per registrare ancora"
+            if success else "Registra lo schermo")
+        if not success:
+            self._show_error(f"Registrazione non riuscita: {error or 'errore di FFmpeg'}")
 
     def _open_configuration_assistant(self) -> None:
         config_path = self.config_path or default_config_path()
@@ -1836,6 +1930,7 @@ class AiBarWindow(Gtk.Window):
         return False
 
     def _on_destroy(self, _window: Gtk.Window) -> None:
+        self._stop_screen_recording(wait=True)
         if self.volume_update_timeout_id is not None:
             GLib.source_remove(self.volume_update_timeout_id)
             self.volume_update_timeout_id = None
@@ -1858,7 +1953,73 @@ class AiBarWindow(Gtk.Window):
         if ctrl and event.keyval == Gdk.KEY_q:
             self.destroy()
             return True
+        if event.state & (
+            Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.MOD1_MASK
+            | Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.SHIFT_MASK
+        ):
+            return False
+        focus = self.get_focus()
+        if isinstance(focus, Gtk.FlowBoxChild):
+            focus = focus.get_child()
+        if not isinstance(focus, Gtk.Button):
+            return False
+        if event.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            focus.clicked()
+            return True
+        directions = {
+            Gdk.KEY_Left: (-1, 0), Gdk.KEY_Right: (1, 0),
+            Gdk.KEY_Up: (0, -1), Gdk.KEY_Down: (0, 1),
+        }
+        if event.keyval in directions:
+            self._move_button_focus(focus, *directions[event.keyval])
+            return True
         return False
+
+    def _panel_buttons(self) -> list[Gtk.Button]:
+        buttons = []
+
+        def collect(widget: Gtk.Widget) -> None:
+            if not widget.get_visible() or not widget.is_sensitive():
+                return
+            if isinstance(widget, Gtk.Button):
+                if widget.get_can_focus():
+                    buttons.append(widget)
+            elif isinstance(widget, Gtk.Container) and not isinstance(widget, Gtk.Notebook):
+                for child in widget.get_children():
+                    collect(child)
+
+        collect(self)
+        return buttons
+
+    def _focus_panel_controls(self) -> bool:
+        self.set_focus_visible(True)
+        buttons = self._panel_buttons()
+        dock_buttons = [button for button in buttons
+                        if self.window_flow is not None and button.is_ancestor(self.window_flow)]
+        if dock_buttons or buttons:
+            (dock_buttons or buttons)[0].grab_focus()
+        return False
+
+    def _move_button_focus(self, focus: Gtk.Button, dx: int, dy: int) -> None:
+        def bounds(button: Gtk.Button) -> tuple[float, float, int, int]:
+            x, y = button.translate_coordinates(self, 0, 0)
+            allocation = button.get_allocation()
+            return x + allocation.width / 2, y + allocation.height / 2, allocation.width, allocation.height
+
+        x, y, width, height = bounds(focus)
+        candidates = []
+        for button in self._panel_buttons():
+            if button is focus:
+                continue
+            bx, by, bw, bh = bounds(button)
+            forward = (bx - x) * dx + (by - y) * dy
+            if forward <= 0:
+                continue
+            sideways = abs(by - y) if dx else abs(bx - x)
+            overlap = sideways < ((height + bh) if dx else (width + bw)) / 2
+            candidates.append(((not overlap, forward ** 2 + sideways ** 2), button))
+        if candidates:
+            min(candidates, key=lambda item: item[0])[1].grab_focus()
 
     def _on_terminal_button_press(self, terminal: Vte.Terminal, event: Gdk.EventButton) -> bool:
         self.present_with_time(event.time)
@@ -3089,6 +3250,7 @@ class AiBarWindow(Gtk.Window):
             self._store_credentials(url, username, password)
 
     def _reload(self) -> None:
+        self._stop_screen_recording(wait=True)
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.stop()
         if self.tray_host is not None:
@@ -3162,7 +3324,7 @@ class AiBarWindow(Gtk.Window):
             self.panel_animation_id = None
             if not self.panel_hidden:
                 self._apply_strut()
-                GLib.idle_add(self._focus_terminal)
+                GLib.idle_add(self._focus_panel_controls)
             return False
 
         step = panel_animation_step(distance)
