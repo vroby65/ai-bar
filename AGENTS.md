@@ -20,6 +20,12 @@ Keep every change small and traceable to the request:
 - preserve the user's existing changes and do not include unrelated files;
 - do not add unrequested compatibility, options, or handling for impossible cases.
 
+## Git workflow
+
+After completing requested changes and the applicable checks, commit and push to
+the current branch's configured upstream unless the user explicitly says otherwise.
+This is the user's standing preference for `ai-bar`.
+
 ## Repository map
 
 - `ai_bar/app.py`: application entrypoint, GTK window, CSS, launchers, VTE terminals,

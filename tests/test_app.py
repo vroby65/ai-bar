@@ -28,6 +28,7 @@ from ai_bar.app import (
     clock_labels_fit_inline,
     command_to_shell_line,
     configuration_assistant_command,
+    recording_audio_sources,
     find_window_by_xid,
     release_x11_window,
     xlib_display,
@@ -59,12 +60,96 @@ from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, TRAY_COLOR_VALUES
 from ai_bar.config import default_config
 
 
+class RecordingAudioSourceTests(unittest.TestCase):
+    @patch("ai_bar.app.run_text_command")
+    def test_sources_distinguish_microphones_from_computer_audio(self, run):
+        run.return_value = json.dumps([
+            {"name": "alsa_input.internal", "description": "Microfono integrato"},
+            {"name": "bluez_input.headset", "description": "Cuffie Bluetooth"},
+            {"name": "alsa_output.speakers.monitor", "description": "Altoparlanti",
+             "monitor_source": "alsa_output.speakers"},
+            {"name": "custom_loopback", "description": "USB",
+             "properties": {"device.class": "monitor"}},
+        ])
+        self.assertEqual(recording_audio_sources(), [
+            ("alsa_input.internal", "Microfono / ingresso — Microfono integrato"),
+            ("bluez_input.headset", "Microfono / ingresso — Cuffie Bluetooth"),
+            ("alsa_output.speakers.monitor", "Audio del computer — Altoparlanti"),
+            ("custom_loopback", "Audio del computer — USB"),
+        ])
+        run.assert_called_once_with(["pactl", "--format=json", "list", "sources"])
+
+    @patch("ai_bar.app.run_text_command")
+    def test_missing_audio_server_or_invalid_response_leaves_video_available(self, run):
+        for output in ("", "not json", "null", "{}", "[]"):
+            with self.subTest(output=output):
+                run.return_value = output
+                self.assertEqual(recording_audio_sources(), [])
+
+    @patch("ai_bar.app.run_text_command")
+    def test_missing_description_uses_source_name_and_invalid_entries_are_skipped(self, run):
+        run.return_value = json.dumps([{}, None, {"name": "usb_mic"}, {"name": "speakers.monitor"}])
+        self.assertEqual(recording_audio_sources(), [
+            ("usb_mic", "Microfono / ingresso — usb_mic"),
+            ("speakers.monitor", "Audio del computer — speakers.monitor"),
+        ])
+
+    @patch("ai_bar.app.run_text_command")
+    def test_muted_microphone_is_identified_without_changing_device_settings(self, run):
+        run.return_value = json.dumps([
+            {"name": "mic", "description": "Integrato", "monitor_source": None, "mute": True},
+        ])
+        self.assertEqual(recording_audio_sources(), [
+            ("mic", "Microfono / ingresso — Integrato (silenziato)"),
+        ])
+        run.assert_called_once_with(["pactl", "--format=json", "list", "sources"])
+
+    @patch("ai_bar.app.recording_audio_sources")
+    def test_dialog_refreshes_devices_keeps_selection_and_supports_cancel(self, sources):
+        sources.return_value = [("mic", "Microfono integrato"), ("output.monitor", "Audio del computer")]
+        window = AiBarWindow.__new__(AiBarWindow)
+        Gtk.Window.__init__(window)
+        self.addCleanup(window.destroy)
+        window.recording_audio_source = "mic"
+        dialogs = []
+        responses = [(Gtk.ResponseType.OK, "output.monitor"), (Gtk.ResponseType.CANCEL, "mic")]
+        def respond(dialog):
+            dialogs.append(dialog)
+            combo = next(child for child in dialog.get_content_area().get_children()
+                         if isinstance(child, Gtk.ComboBoxText))
+            self.assertEqual(combo.get_active_id(), "mic")
+            response, selection = responses.pop(0)
+            combo.set_active_id(selection)
+            return response
+        with patch.object(Gtk.Dialog, "run", respond):
+            self.assertEqual(window._choose_recording_audio_source(), "output.monitor")
+            self.assertIsNone(window._choose_recording_audio_source())
+        self.assertEqual(sources.call_count, 2)
+        self.assertTrue(all(not dialog.get_visible() for dialog in dialogs))
+
+    @patch("ai_bar.app.recording_audio_sources", return_value=[])
+    def test_disconnected_device_falls_back_to_no_audio(self, sources):
+        window = AiBarWindow.__new__(AiBarWindow)
+        Gtk.Window.__init__(window)
+        self.addCleanup(window.destroy)
+        window.recording_audio_source = "disconnected_usb_mic"
+        def accept(dialog):
+            combo = next(child for child in dialog.get_content_area().get_children()
+                         if isinstance(child, Gtk.ComboBoxText))
+            self.assertEqual(combo.get_active_id(), "")
+            return Gtk.ResponseType.OK
+        with patch.object(Gtk.Dialog, "run", accept):
+            self.assertEqual(window._choose_recording_audio_source(), "")
+
+
 class ScreenRecordingTests(unittest.TestCase):
     def setUp(self):
         self.window = AiBarWindow.__new__(AiBarWindow)
         self.window.recording_process = None
         self.window.recording_path = None
         self.window.recording_stopping = False
+        self.window.recording_audio_source = ""
+        self.window._choose_recording_audio_source = Mock(return_value="")
         self.window._show_error = Mock()
         self.window._monitor_geometry = Mock(return_value=SimpleNamespace(
             x=1920, y=0, width=1080, height=1920))
@@ -91,7 +176,9 @@ class ScreenRecordingTests(unittest.TestCase):
         self.assertFalse(flags & Gio.SubprocessFlags.STDIN_PIPE)
         self.assertTrue(self.button.get_style_context().has_class("recording"))
         self.assertEqual(self.button.get_tooltip_text(), "Ferma e salva la registrazione")
+        self.window._choose_recording_audio_source.assert_called_once_with()
         self.button.clicked()
+        self.window._choose_recording_audio_source.assert_called_once_with()
         process.send_signal.assert_called_once_with(signal.SIGINT)
         self.assertFalse(self.button.get_sensitive())
         self.assertIs(self.window.recording_process, process)
@@ -106,6 +193,38 @@ class ScreenRecordingTests(unittest.TestCase):
         self.assertFalse(self.button.get_style_context().has_class("recording"))
         self.assertIn(argv[-1], self.button.get_tooltip_text())
         self.window._show_error.assert_not_called()
+
+    @patch("ai_bar.app.Gio.Subprocess.new")
+    def test_cancel_does_not_start_a_recording_or_create_a_file(self, spawn):
+        self.window._choose_recording_audio_source.return_value = None
+        self.button.clicked()
+        spawn.assert_not_called()
+        self.assertIsNone(self.window.recording_process)
+        self.assertEqual(list(Path(self.temporary.name).iterdir()), [])
+
+    @patch("ai_bar.app.Gio.Subprocess.new")
+    def test_selected_microphone_and_system_audio_are_captured_as_aac(self, spawn):
+        for source in ("alsa_input.laptop", "alsa_output.headphones.monitor"):
+            with self.subTest(source=source):
+                self.window.recording_process = None
+                self.window._choose_recording_audio_source.return_value = source
+                self.button.clicked()
+                argv = spawn.call_args.args[0]
+                inputs = [argv[i + 1] for i, option in enumerate(argv) if option == "-i"]
+                self.assertEqual(inputs[1], source)
+                self.assertIn("pulse", argv)
+                self.assertNotIn("-an", argv)
+                self.assertEqual(argv[argv.index("-c:a") + 1], "aac")
+                self.assertEqual(argv[argv.index("-af") + 1], "aresample=async=1:first_pts=0")
+                self.assertEqual(self.window.recording_audio_source, source)
+
+    @patch("ai_bar.app.Gio.Subprocess.new")
+    def test_without_audio_has_no_audio_input(self, spawn):
+        self.button.clicked()
+        argv = spawn.call_args.args[0]
+        self.assertIn("-an", argv)
+        self.assertNotIn("pulse", argv)
+        self.assertEqual(argv.count("-i"), 1)
 
     @patch("ai_bar.app.Gio.Subprocess.new", side_effect=GLib.Error("ffmpeg assente"))
     def test_launch_error_leaves_button_ready(self, spawn):

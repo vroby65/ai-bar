@@ -964,6 +964,7 @@ class AiBarWindow(Gtk.Window):
         self.recording_process: Gio.Subprocess | None = None
         self.recording_path: Path | None = None
         self.recording_stopping = False
+        self.recording_audio_source = ""
         self.volume_percent = 0
         self.volume_muted = False
         self.volume_should_unmute = False
@@ -1314,6 +1315,38 @@ class AiBarWindow(Gtk.Window):
         self.recording_button.connect("clicked", self._toggle_screen_recording)
         return self.recording_button
 
+    def _choose_recording_audio_source(self) -> str | None:
+        sources = recording_audio_sources()
+        dialog = Gtk.Dialog(
+            title="Registra lo schermo", transient_for=self, flags=Gtk.DialogFlags.MODAL)
+        dialog.add_buttons("Annulla", Gtk.ResponseType.CANCEL, "Avvia registrazione", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+        content = dialog.get_content_area()
+        content.set_border_width(16)
+        content.set_spacing(12)
+        content.add(Gtk.Label(label="Audio da registrare", xalign=0))
+        combo = Gtk.ComboBoxText()
+        renderer = combo.get_cells()[0]
+        renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
+        renderer.set_property("max-width-chars", 60)
+        combo.append("", "Senza audio")
+        for name, label in sources:
+            combo.append(name, label)
+        available = {name for name, _label in sources}
+        combo.set_active_id(self.recording_audio_source if self.recording_audio_source in available else "")
+        content.add(combo)
+        hint = Gtk.Label(
+            label="Scegli un microfono per la tua voce oppure l'audio del computer.\n"
+                  "Per aggiornare i dispositivi, chiudi e riapri questa finestra.",
+            xalign=0)
+        hint.set_line_wrap(True)
+        content.add(hint)
+        dialog.show_all()
+        response = dialog.run()
+        selected = combo.get_active_id()
+        dialog.destroy()
+        return selected if response == Gtk.ResponseType.OK else None
+
     def _toggle_screen_recording(self, _button: Gtk.Button) -> None:
         if self.recording_process is not None:
             self._stop_screen_recording()
@@ -1321,25 +1354,41 @@ class AiBarWindow(Gtk.Window):
         if os.environ.get("XDG_SESSION_TYPE") == "wayland":
             self._show_error("La registrazione dello schermo richiede una sessione X11.")
             return
+        audio_source = self._choose_recording_audio_source()
+        if audio_source is None:
+            return
         geometry = self._monitor_geometry()
         video_directory = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS)
         directory = Path(video_directory or Path.home() / "Videos") / "Registrazioni"
         try:
             directory.mkdir(parents=True, exist_ok=True)
             self.recording_path = directory / f"Schermo_{datetime.now():%Y-%m-%d_%H-%M-%S_%f}.mp4"
-            self.recording_process = Gio.Subprocess.new([
+            command = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-n",
-                "-f", "x11grab", "-framerate", "30",
+                "-thread_queue_size", "512", "-f", "x11grab", "-framerate", "30",
                 "-video_size", f"{geometry.width}x{geometry.height}",
                 "-i", f"{os.environ.get('DISPLAY', ':0')}+{geometry.x},{geometry.y}",
-                "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            ]
+            if audio_source:
+                command += [
+                    "-thread_queue_size", "512", "-f", "pulse", "-i", audio_source,
+                    "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "128k",
+                    "-af", "aresample=async=1:first_pts=0",
+                ]
+            else:
+                command += ["-an"]
+            command += [
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
                 "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p",
                 str(self.recording_path),
-            ], Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+            ]
+            self.recording_process = Gio.Subprocess.new(
+                command, Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
         except (GLib.Error, OSError) as exc:
             self._show_error(f"Impossibile avviare la registrazione: {exc}")
             return
         self.recording_stopping = False
+        self.recording_audio_source = audio_source
         self.recording_button.get_style_context().add_class("recording")
         self.recording_button.get_child().set_from_icon_name(
             "media-playback-stop-symbolic", Gtk.IconSize.MENU)
@@ -3585,6 +3634,29 @@ def run_text_command(argv: list[str], timeout: float = 2.0) -> str:
     if completed.returncode != 0:
         return ""
     return completed.stdout.strip()
+
+
+def recording_audio_sources() -> list[tuple[str, str]]:
+    output = run_text_command(["pactl", "--format=json", "list", "sources"])
+    try:
+        sources = json.loads(output)
+    except ValueError:
+        return []
+    if not isinstance(sources, list):
+        return []
+    choices = []
+    for source in sources:
+        if not isinstance(source, dict) or not source.get("name"):
+            continue
+        name = source["name"]
+        monitor = (bool(source.get("monitor_source")) or name.endswith(".monitor")
+                   or source.get("properties", {}).get("device.class") == "monitor")
+        kind = "Audio del computer" if monitor else "Microfono / ingresso"
+        label = source.get("description") or name
+        if source.get("mute"):
+            label += " (silenziato)"
+        choices.append((name, f"{kind} — {label}"))
+    return choices
 
 
 def volume_state_from_wpctl(output: str) -> VolumeState | None:
