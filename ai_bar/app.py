@@ -456,6 +456,95 @@ class VolumeState:
     muted: bool
 
 
+class RecordingAreaSelector(Gtk.Dialog):
+    def __init__(self) -> None:
+        super().__init__(title="Trascina per selezionare l'area da registrare — Esc per annullare",
+                         type=Gtk.WindowType.POPUP)
+        root = Gdk.get_default_root_window()
+        self.width, self.height = root.get_width(), root.get_height()
+        self.background = Gdk.pixbuf_get_from_window(root, 0, 0, self.width, self.height)
+        self.start: tuple[int, int] | None = None
+        self.selection: Gdk.Rectangle | None = None
+        self.set_app_paintable(True)
+        self.move(0, 0)
+        self.set_default_size(self.width, self.height)
+        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
+                        | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.KEY_PRESS_MASK)
+        self.connect("draw", self._draw)
+        self.connect("button-press-event", self._press)
+        self.connect("motion-notify-event", self._motion)
+        self.connect("button-release-event", self._release)
+        self.connect("key-press-event", self._key)
+        self.connect("map", self._grab)
+        self.connect("unmap", lambda _widget: self.get_display().get_default_seat().ungrab())
+
+    def _grab(self, _widget: Gtk.Widget) -> None:
+        cursor = Gdk.Cursor.new_for_display(self.get_display(), Gdk.CursorType.CROSSHAIR)
+        status = self.get_display().get_default_seat().grab(
+            self.get_window(), Gdk.SeatCapabilities.ALL, False, cursor, None, None, None)
+        if status != Gdk.GrabStatus.SUCCESS:
+            GLib.idle_add(self.response, Gtk.ResponseType.CANCEL)
+
+    def _point(self, event: Gdk.Event) -> tuple[int, int]:
+        return (max(0, min(self.width, int(event.x))),
+                max(0, min(self.height, int(event.y))))
+
+    def _press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button == 1:
+            self.start = self._point(event)
+            self.selection = None
+            self.queue_draw()
+        return True
+
+    def _motion(self, _widget: Gtk.Widget, event: Gdk.EventMotion) -> bool:
+        if self.start is not None:
+            x, y = self._point(event)
+            rectangle = Gdk.Rectangle()
+            rectangle.x, rectangle.y = min(self.start[0], x), min(self.start[1], y)
+            rectangle.width, rectangle.height = abs(x - self.start[0]), abs(y - self.start[1])
+            self.selection = rectangle
+            self.queue_draw()
+        return True
+
+    def _release(self, widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button == 1 and self.start is not None:
+            self._motion(widget, event)
+            if self.selection.width > 0 and self.selection.height > 0:
+                self.response(Gtk.ResponseType.OK)
+        return True
+
+    def _key(self, _widget: Gtk.Widget, event: Gdk.EventKey) -> bool:
+        if event.keyval == Gdk.KEY_Escape:
+            self.response(Gtk.ResponseType.CANCEL)
+        return True
+
+    def _draw(self, _widget: Gtk.Widget, context: Any) -> bool:
+        if self.background is not None:
+            context.save()
+            context.scale(self.width / self.background.get_width(),
+                          self.height / self.background.get_height())
+            Gdk.cairo_set_source_pixbuf(context, self.background, 0, 0)
+            context.paint()
+            context.restore()
+        context.set_source_rgba(0, 0, 0, 0.35)
+        if self.selection is None:
+            context.paint()
+        else:
+            r = self.selection
+            for x, y, width, height in (
+                (0, 0, self.width, r.y), (0, r.y, r.x, r.height),
+                (r.x + r.width, r.y, self.width - r.x - r.width, r.height),
+                (0, r.y + r.height, self.width, self.height - r.y - r.height),
+            ):
+                context.rectangle(x, y, width, height)
+            context.fill()
+            context.set_source_rgb(1, 1, 1)
+            context.set_line_width(1)
+            context.rectangle(r.x + 0.5, r.y + 0.5, r.width - 1, r.height - 1)
+            context.stroke()
+        return True
+
+
 class X11SuperToggle:
     def __init__(
         self, callback: Callable[[], None], powerdown_callback: Callable[[], None]
@@ -1319,7 +1408,7 @@ class AiBarWindow(Gtk.Window):
         sources = recording_audio_sources()
         dialog = Gtk.Dialog(
             title="Registra lo schermo", transient_for=self, flags=Gtk.DialogFlags.MODAL)
-        dialog.add_buttons("Annulla", Gtk.ResponseType.CANCEL, "Avvia registrazione", Gtk.ResponseType.OK)
+        dialog.add_buttons("Annulla", Gtk.ResponseType.CANCEL, "Seleziona area…", Gtk.ResponseType.OK)
         dialog.set_default_response(Gtk.ResponseType.OK)
         content = dialog.get_content_area()
         content.set_border_width(16)
@@ -1347,6 +1436,23 @@ class AiBarWindow(Gtk.Window):
         dialog.destroy()
         return selected if response == Gtk.ResponseType.OK else None
 
+    def _choose_recording_area(self) -> Gdk.Rectangle | None:
+        dialog = RecordingAreaSelector()
+        try:
+            dialog.show_all()
+            if dialog.run() != Gtk.ResponseType.OK:
+                return None
+            rectangle = dialog.selection
+            scale = dialog.get_scale_factor()
+            rectangle.x *= scale
+            rectangle.y *= scale
+            rectangle.width *= scale
+            rectangle.height *= scale
+            return rectangle
+        finally:
+            dialog.destroy()
+            Gdk.Display.get_default().sync()
+
     def _toggle_screen_recording(self, _button: Gtk.Button) -> None:
         if self.recording_process is not None:
             self._stop_screen_recording()
@@ -1357,7 +1463,9 @@ class AiBarWindow(Gtk.Window):
         audio_source = self._choose_recording_audio_source()
         if audio_source is None:
             return
-        geometry = self._monitor_geometry()
+        geometry = self._choose_recording_area()
+        if geometry is None:
+            return
         video_directory = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS)
         directory = Path(video_directory or Path.home() / "Videos") / "Registrazioni"
         try:

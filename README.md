@@ -120,8 +120,10 @@ The default display button opens MATE's display settings (`mate-display-properti
 The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
 
 The tools are ordered left to right: screenshot, recording, and window tiling.
-Click the recording button to choose the audio source, then start recording the
-panel monitor on X11 at 30 fps. Choose no audio, a microphone/input (including
+Click the recording button to choose the audio source, then drag a rectangle on
+the desktop to record that area on X11 at 30 fps, like the screenshot area selector.
+Release the left mouse button to start recording, or press Esc to cancel.
+Choose no audio, a microphone/input (including
 built-in, USB, or Bluetooth devices), or computer playback from an output monitor.
 Available sources are refreshed each time the dialog opens; the last choice is
 kept until AI-bar restarts, falling back to no audio if the device is disconnected.

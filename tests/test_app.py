@@ -20,6 +20,7 @@ from ai_bar.app import (
     AiBarWindow,
     CSS,
     NaturalWrapBox,
+    RecordingAreaSelector,
     WindowInfo,
     X,
     X11SuperToggle,
@@ -142,6 +143,76 @@ class RecordingAudioSourceTests(unittest.TestCase):
             self.assertEqual(window._choose_recording_audio_source(), "")
 
 
+class RecordingAreaSelectorTests(unittest.TestCase):
+    def choose(self, interact):
+        window = AiBarWindow.__new__(AiBarWindow)
+        errors = []
+        def run_interaction():
+            selector = next(widget for widget in Gtk.Window.list_toplevels()
+                            if isinstance(widget, RecordingAreaSelector))
+            try:
+                interact(selector)
+            except Exception as exc:
+                errors.append(exc)
+                selector.response(Gtk.ResponseType.CANCEL)
+            return False
+        GLib.idle_add(run_interaction)
+        result = window._choose_recording_area()
+        if errors:
+            raise errors[0]
+        self.assertFalse(any(isinstance(widget, RecordingAreaSelector) and widget.get_visible()
+                             for widget in Gtk.Window.list_toplevels()))
+        return result
+
+    def emit_pointer(self, selector, signal_name, event_type, x, y):
+        event = Gdk.Event.new(event_type)
+        event.window = selector.get_window()
+        event.x, event.y = x, y
+        if event_type != Gdk.EventType.MOTION_NOTIFY:
+            event.button = 1
+        selector.emit(signal_name, event)
+
+    def drag(self, selector, start, end):
+        self.emit_pointer(selector, "button-press-event", Gdk.EventType.BUTTON_PRESS, *start)
+        self.emit_pointer(selector, "motion-notify-event", Gdk.EventType.MOTION_NOTIFY, *end)
+        self.emit_pointer(selector, "button-release-event", Gdk.EventType.BUTTON_RELEASE, *end)
+
+    def test_drag_in_both_directions_returns_the_selected_screen_coordinates(self):
+        for start, end in (((50, 60), (691, 539)), ((691, 539), (50, 60))):
+            with self.subTest(start=start):
+                area = self.choose(lambda selector: self.drag(selector, start, end))
+                self.assertEqual((area.x, area.y, area.width, area.height), (50, 60, 641, 479))
+
+    def test_selection_is_clamped_to_desktop_bounds(self):
+        root = Gdk.get_default_root_window()
+        area = self.choose(lambda selector: self.drag(
+            selector, (root.get_width() - 100, root.get_height() - 100),
+            (root.get_width() + 100, root.get_height() + 100)))
+        self.assertEqual((area.width, area.height), (100, 100))
+
+    def test_escape_cancels_and_a_click_without_drag_does_not_record(self):
+        def interact(selector):
+            responses = []
+            selector.connect("response", lambda _dialog, response: responses.append(response))
+            self.drag(selector, (50, 60), (50, 60))
+            self.assertEqual(responses, [])
+            event = Gdk.Event.new(Gdk.EventType.KEY_PRESS)
+            event.keyval = Gdk.KEY_Escape
+            selector.emit("key-press-event", event)
+            self.assertEqual(responses, [Gtk.ResponseType.CANCEL])
+        self.assertIsNone(self.choose(interact))
+
+    def test_scaled_desktop_returns_physical_pixels_for_ffmpeg(self):
+        with patch.object(RecordingAreaSelector, "get_scale_factor", return_value=2):
+            area = self.choose(lambda selector: self.drag(selector, (50, 60), (691, 539)))
+        self.assertEqual((area.x, area.y, area.width, area.height), (100, 120, 1282, 958))
+
+    def test_unavailable_input_grab_cancels_selection(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        with patch.object(Gdk.Seat, "grab", return_value=Gdk.GrabStatus.ALREADY_GRABBED):
+            self.assertIsNone(window._choose_recording_area())
+
+
 class ScreenRecordingTests(unittest.TestCase):
     def setUp(self):
         self.window = AiBarWindow.__new__(AiBarWindow)
@@ -150,6 +221,8 @@ class ScreenRecordingTests(unittest.TestCase):
         self.window.recording_stopping = False
         self.window.recording_audio_source = ""
         self.window._choose_recording_audio_source = Mock(return_value="")
+        self.window._choose_recording_area = Mock(return_value=SimpleNamespace(
+            x=2021, y=137, width=641, height=479))
         self.window._show_error = Mock()
         self.window._monitor_geometry = Mock(return_value=SimpleNamespace(
             x=1920, y=0, width=1080, height=1920))
@@ -168,8 +241,9 @@ class ScreenRecordingTests(unittest.TestCase):
         self.button.clicked()
         argv, flags = spawn.call_args.args
         self.assertEqual(argv[0], "ffmpeg")
-        self.assertEqual(argv[argv.index("-video_size") + 1], "1080x1920")
-        self.assertEqual(argv[argv.index("-i") + 1], ":7+1920,0")
+        self.assertEqual(argv[argv.index("-video_size") + 1], "641x479")
+        self.assertEqual(argv[argv.index("-i") + 1], ":7+2021,137")
+        self.assertEqual(argv[argv.index("-vf") + 1], "pad=ceil(iw/2)*2:ceil(ih/2)*2")
         self.assertEqual(argv[argv.index("-framerate") + 1], "30")
         self.assertEqual(Path(argv[-1]).parent, Path(self.temporary.name) / "Registrazioni")
         self.assertEqual(Path(argv[-1]).suffix, ".mp4")
@@ -177,8 +251,10 @@ class ScreenRecordingTests(unittest.TestCase):
         self.assertTrue(self.button.get_style_context().has_class("recording"))
         self.assertEqual(self.button.get_tooltip_text(), "Ferma e salva la registrazione")
         self.window._choose_recording_audio_source.assert_called_once_with()
+        self.window._choose_recording_area.assert_called_once_with()
         self.button.clicked()
         self.window._choose_recording_audio_source.assert_called_once_with()
+        self.window._choose_recording_area.assert_called_once_with()
         process.send_signal.assert_called_once_with(signal.SIGINT)
         self.assertFalse(self.button.get_sensitive())
         self.assertIs(self.window.recording_process, process)
@@ -198,8 +274,19 @@ class ScreenRecordingTests(unittest.TestCase):
     def test_cancel_does_not_start_a_recording_or_create_a_file(self, spawn):
         self.window._choose_recording_audio_source.return_value = None
         self.button.clicked()
+        self.window._choose_recording_area.assert_not_called()
         spawn.assert_not_called()
         self.assertIsNone(self.window.recording_process)
+        self.assertEqual(list(Path(self.temporary.name).iterdir()), [])
+
+    @patch("ai_bar.app.Gio.Subprocess.new")
+    def test_cancel_area_selection_does_not_start_recording_or_create_a_file(self, spawn):
+        self.window._choose_recording_area.return_value = None
+        self.button.clicked()
+        spawn.assert_not_called()
+        self.assertIsNone(self.window.recording_process)
+        self.assertTrue(self.button.get_sensitive())
+        self.assertFalse(self.button.get_style_context().has_class("recording"))
         self.assertEqual(list(Path(self.temporary.name).iterdir()), [])
 
     @patch("ai_bar.app.Gio.Subprocess.new")
