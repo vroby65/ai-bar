@@ -191,3 +191,11 @@ A change is ready when the requested behavior is covered, the suite and compilat
 pass, `git diff --check` is clean, documentation and the example are aligned when a
 public surface changes, and the diff contains no unrelated modifications. Report
 checks that could not be run and explain why instead of claiming they passed.
+
+## Optional quality skill
+
+For nontrivial changes, consult `.agents/skills/ai-bar-quality/SKILL.md` for
+a proportionate Make it Work / Make it Right / Practice workflow inspired by
+Uncle Bob's `ub-mode`. This guide remains authoritative where the two overlap.
+Use the skill as a checklist, not as a reason to add dependencies or unrelated
+refactoring.
