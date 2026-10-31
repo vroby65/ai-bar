@@ -364,14 +364,19 @@ class ScreenRecordingTests(unittest.TestCase):
 
     @patch("ai_bar.app.os.execvp")
     @patch("ai_bar.app.restore_x11_window")
-    def test_reload_restores_embedded_windows_before_exec(self, restore, execvp):
+    @patch.dict(os.environ)
+    def test_reload_restores_embedded_windows_after_exec(self, restore, execvp):
         window = SimpleNamespace(
             _stop_screen_recording=Mock(), xapp_tray_host=None, tray_host=None,
             embedded_window_xids={"window:chatgpt": 20},
         )
         AiBarWindow._reload(window)
-        restore.assert_called_once_with(20)
+        restore.assert_not_called()
         execvp.assert_called_once()
+        self.assertEqual(json.loads(os.environ["AI_BAR_RESTORE_XIDS"]), [20])
+        self.assertFalse(AiBarWindow._restore_native_windows_after_reload(window))
+        restore.assert_called_once_with(20)
+        self.assertNotIn("AI_BAR_RESTORE_XIDS", os.environ)
 
     @patch("ai_bar.app.Gio.Subprocess.new")
     @patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"})

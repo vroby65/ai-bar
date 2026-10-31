@@ -2122,6 +2122,7 @@ class AiBarWindow(Gtk.Window):
         )
         self.super_toggle.start()
         GLib.idle_add(self._focus_terminal)
+        GLib.idle_add(self._restore_native_windows_after_reload)
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.start()
         if self.tray_host is not None:
@@ -3492,10 +3493,17 @@ class AiBarWindow(Gtk.Window):
         if answer == Gtk.ResponseType.YES:
             self._store_credentials(url, username, password)
 
+    def _restore_native_windows_after_reload(self) -> bool:
+        xids = json.loads(os.environ.pop("AI_BAR_RESTORE_XIDS", "[]"))
+        for xid in xids:
+            restore_x11_window(xid)
+        return False
+
     def _reload(self) -> None:
         self._stop_screen_recording(wait=True)
-        for xid in list(self.embedded_window_xids.values()):
-            restore_x11_window(xid)
+        # The old Gtk.Socket connection still owns the X11 save-set. Restore
+        # only after exec closes that connection, or its cleanup undoes the map.
+        os.environ["AI_BAR_RESTORE_XIDS"] = json.dumps(list(self.embedded_window_xids.values()))
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.stop()
         if self.tray_host is not None:
