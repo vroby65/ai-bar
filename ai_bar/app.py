@@ -2257,15 +2257,13 @@ class AiBarWindow(Gtk.Window):
         return policies.get(wanted, WebKit2.HardwareAccelerationPolicy.NEVER)
 
     def _on_content_click(self, widget: Gtk.Widget, _event: Gdk.EventButton) -> bool:
-        # Il pannello e' una finestra di tipo DOCK, e i window manager non danno
-        # il focus da tastiera a un dock quando ci si clicca dentro: il mouse
-        # arriva (i pulsanti reagiscono) ma i campi di testo restano muti.
-        # Chiederlo esplicitamente al primo clic ricrea il comportamento di una
-        # finestra normale. Si ritorna False perche' il clic deve comunque
-        # arrivare al contenuto.
-        if not self.is_active():
-            self.get_window().focus(_event.time)
-            widget.grab_focus()
+        # DOCK activation state can stay true while another app owns the keyboard.
+        # Restore native focus on every click, then let the content handle it.
+        gdk_window = self.get_window()
+        gdk_window.focus(_event.time)
+        if hasattr(gdk_window, "get_xid"):
+            focus_x11_window(gdk_window.get_xid())
+        widget.grab_focus()
         return False
 
     def _build_terminal_menu(self, terminal: Vte.Terminal) -> Gtk.Menu:

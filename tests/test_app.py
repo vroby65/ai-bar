@@ -1681,15 +1681,20 @@ class ClockLayoutTests(unittest.TestCase):
         # False: il clic deve comunque arrivare al contenuto.
         self.assertFalse(handled)
 
-    def test_a_click_on_the_content_leaves_an_active_panel_alone(self):
+    @patch("ai_bar.app.focus_x11_window")
+    def test_a_click_restores_keyboard_focus_even_if_panel_reports_active(self, focus):
         window = AiBarWindow.__new__(AiBarWindow)
         window.is_active = Mock(return_value=True)
-        window.present = Mock()
+        window.get_window = Mock(return_value=Mock())
+        window.get_window().get_xid.return_value = 123
         widget = Mock()
+        event = Mock(time=456)
 
-        self.assertFalse(window._on_content_click(widget, Mock()))
-        window.present.assert_not_called()
-        widget.grab_focus.assert_not_called()
+        self.assertFalse(window._on_content_click(widget, event))
+
+        window.get_window().focus.assert_called_once_with(456)
+        focus.assert_called_once_with(123)
+        widget.grab_focus.assert_called_once_with()
 
     def test_maximize_launched_window_ignores_windows_present_before_launch(self):
         class Window:
