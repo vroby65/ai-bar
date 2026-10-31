@@ -699,6 +699,14 @@ def add_accent_color(widget: Gtk.Widget, index: int) -> None:
     )
 
 
+class ToolNotebook(Gtk.Notebook):
+    __gtype_name__ = "AiBarToolNotebook"
+
+    def do_get_preferred_width(self) -> tuple[int, int]:
+        # Tool content must fit the panel rather than enlarge its dock.
+        return 0, 0
+
+
 class NaturalWrapBox(Gtk.Fixed):
     __gtype_name__ = "AiBarNaturalWrapBox"
 
@@ -1162,7 +1170,7 @@ class AiBarWindow(Gtk.Window):
                     0,
                 )
 
-        self.terminal_notebook = Gtk.Notebook()
+        self.terminal_notebook = ToolNotebook()
         self.terminal_notebook.get_style_context().add_class("terminal-wrap")
         self.terminal_notebook.set_show_tabs(False)
         self.terminal_notebook.set_scrollable(True)
@@ -2256,7 +2264,7 @@ class AiBarWindow(Gtk.Window):
         # finestra normale. Si ritorna False perche' il clic deve comunque
         # arrivare al contenuto.
         if not self.is_active():
-            self.present()
+            self.get_window().focus(_event.time)
             widget.grab_focus()
         return False
 

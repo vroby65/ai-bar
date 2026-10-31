@@ -20,6 +20,7 @@ from ai_bar.app import (
     AiBarWindow,
     CSS,
     NaturalWrapBox,
+    ToolNotebook,
     RecordingAreaSelector,
     WindowInfo,
     X,
@@ -1655,17 +1656,27 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIs(window._webview_acceleration_policy(),
                       webkit2.HardwareAccelerationPolicy.NEVER)
 
+    def test_tool_notebook_does_not_propagate_page_width(self):
+        notebook = ToolNotebook()
+        page = Gtk.DrawingArea()
+        page.set_size_request(1200, 100)
+        notebook.append_page(page, None)
+        notebook.show_all()
+        self.assertEqual(notebook.get_preferred_width().minimum_width, 0)
+        notebook.destroy()
+
     def test_a_click_on_the_content_asks_for_keyboard_focus(self):
         # Il pannello e' un DOCK: senza richiesta esplicita i campi di testo
         # restano non editabili finche' non si cambia scheda.
         window = AiBarWindow.__new__(AiBarWindow)
         window.is_active = Mock(return_value=False)
         window.present = Mock()
+        window.get_window = Mock(return_value=Mock())
         widget = Mock()
 
         handled = window._on_content_click(widget, Mock())
 
-        window.present.assert_called_once()
+        window.get_window().focus.assert_called_once()
         widget.grab_focus.assert_called_once()
         # False: il clic deve comunque arrivare al contenuto.
         self.assertFalse(handled)
