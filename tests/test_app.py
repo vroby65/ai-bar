@@ -1896,6 +1896,33 @@ class ClockLayoutTests(unittest.TestCase):
             self.assertFalse(window._focus_embedded_window(socket))
         focus.assert_not_called()
 
+    @patch("ai_bar.app.focus_x11_window")
+    @patch("ai_bar.app.x11_pointer_inside_window")
+    def test_click_on_embedded_window_restores_keyboard_focus(self, inside, focus):
+        window = AiBarWindow.__new__(AiBarWindow)
+        socket = Mock()
+        socket.get_mapped.return_value = True
+        window.embedded = {"window:chatgpt": socket}
+        window.embedded_window_xids = {"window:chatgpt": 20}
+        inside.return_value = True
+
+        self.assertFalse(window._focus_clicked_embedded_window())
+
+        inside.assert_called_once_with(20)
+        focus.assert_called_once_with(20)
+
+    @patch("ai_bar.app.focus_x11_window")
+    @patch("ai_bar.app.x11_pointer_inside_window", return_value=False)
+    def test_click_outside_embedded_window_does_not_steal_focus(self, inside, focus):
+        window = AiBarWindow.__new__(AiBarWindow)
+        socket = Mock()
+        socket.get_mapped.return_value = True
+        window.embedded = {"window:chatgpt": socket}
+        window.embedded_window_xids = {"window:chatgpt": 20}
+
+        self.assertFalse(window._focus_clicked_embedded_window())
+        focus.assert_not_called()
+
     def test_fast_window_is_not_mistaken_for_one_existing_before_launch(self):
         window = AiBarWindow.__new__(AiBarWindow)
         key = "window:" + command_to_shell_line(["menugui"])

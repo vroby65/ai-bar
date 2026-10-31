@@ -306,6 +306,23 @@ def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
     return None
 
 
+def x11_pointer_inside_window(xid: int) -> bool:
+    if X is None or xlib_display is None:
+        return False
+    display = xlib_display.Display()
+    try:
+        window = display.screen().root
+        while window:
+            if window.id == xid:
+                return True
+            window = window.query_pointer().child
+        return False
+    except Exception:
+        return False
+    finally:
+        display.close()
+
+
 def focus_x11_window(xid: int) -> bool:
     if X is None or xlib_display is None:
         return False
@@ -566,10 +583,12 @@ class RecordingAreaSelector(Gtk.Dialog):
 
 class X11SuperToggle:
     def __init__(
-        self, callback: Callable[[], None], powerdown_callback: Callable[[], None]
+        self, callback: Callable[[], None], powerdown_callback: Callable[[], None],
+        button_callback: Callable[[], bool] | None = None,
     ) -> None:
         self.callback = callback
         self.powerdown_callback = powerdown_callback
+        self.button_callback = button_callback
         self.display: Any = None
         self.keycodes: set[int] = set()
         self.powerdown_keycode = 0
@@ -609,7 +628,7 @@ class X11SuperToggle:
                         "ext_requests": (0, 0, 0, 0),
                         "ext_replies": (0, 0, 0, 0),
                         "delivered_events": (0, 0),
-                        "device_events": (X.KeyPress, X.KeyRelease),
+                        "device_events": (X.KeyPress, X.ButtonPress),
                         "errors": (0, 0),
                         "client_started": False,
                         "client_died": False,
@@ -670,6 +689,10 @@ class X11SuperToggle:
             self._handle_event(event)
 
     def _handle_event(self, event: Any) -> None:
+        if event.type == X.ButtonPress:
+            if self.button_callback is not None:
+                GLib.idle_add(self.button_callback)
+            return
         keycode = int(event.detail)
         if keycode in self.keycodes:
             if event.type == X.KeyPress:
@@ -2095,6 +2118,7 @@ class AiBarWindow(Gtk.Window):
         self.super_toggle = X11SuperToggle(
             self._toggle_panel_visibility,
             lambda: self._launch_session_action("poweroff"),
+            self._focus_clicked_embedded_window,
         )
         self.super_toggle.start()
         GLib.idle_add(self._focus_terminal)
@@ -2855,6 +2879,14 @@ class AiBarWindow(Gtk.Window):
             xid = self.embedded_window_xids.get(key)
             if xid is not None:
                 focus_x11_window(xid)
+        return False
+
+    def _focus_clicked_embedded_window(self) -> bool:
+        for key, xid in self.embedded_window_xids.items():
+            socket = self.embedded.get(key)
+            if socket is not None and socket.get_mapped() and x11_pointer_inside_window(xid):
+                focus_x11_window(xid)
+                break
         return False
 
     def _embed_launched_window(
