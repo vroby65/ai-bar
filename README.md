@@ -2,6 +2,9 @@
 
 A GTK side panel similar to a desktop bar, with the date and time at the top, a tray/status area with a window list, two configurable launcher groups, and an embedded terminal at the bottom.
 
+On laptops, the status area shows the battery percentage and charging state;
+the indicator is hidden when no battery is detected.
+
 The default theme uses a flat graphite surface with solid accent colors for the
 main controls. Launcher and window buttons cycle through the accent palette,
 while page actions, quick launchers, and tray icons remain transparent.

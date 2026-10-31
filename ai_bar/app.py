@@ -492,6 +492,12 @@ class VolumeState:
     muted: bool
 
 
+@dataclass(frozen=True)
+class BatteryState:
+    percent: int
+    status: str
+
+
 class RecordingAreaSelector(Gtk.Dialog):
     def __init__(self) -> None:
         super().__init__(title="Trascina per selezionare l'area da registrare — Esc per annullare",
@@ -982,13 +988,13 @@ button.status-button {
   border-radius: 5px;
   box-shadow: none;
   color: #17191a;
-  padding: 3px 5px;
+  padding: 1px 3px;
 }
 
 button.volume-mute-button,
 button.volume-settings-button {
   border-radius: 4px;
-  padding: 3px;
+  padding: 2px;
 }
 
 button.page-action-button {
@@ -1026,11 +1032,11 @@ button.quick-launcher-button:checked {
 }
 
 scale.volume-slider {
-  min-width: 65px;
+  min-width: 48px;
 }
 
 .volume-percent {
-  min-width: 38px;
+  min-width: 28px;
 }
 
 button.launcher-button.icon-only-launcher {
@@ -1119,6 +1125,7 @@ class AiBarWindow(Gtk.Window):
         self.tray_host: XEmbedTrayHost | None = None
         self.xapp_tray_host: XAppStatusIconHost | None = None
         self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
+        self.battery_statuses: list[tuple[Gtk.Button, Gtk.Label, Gtk.Image]] = []
         self.volume_controls: list[tuple[Gtk.Scale, Gtk.Label, Gtk.Image]] = []
         self.recording_process: Gio.Subprocess | None = None
         self.recording_path: Path | None = None
@@ -1173,6 +1180,7 @@ class AiBarWindow(Gtk.Window):
         self._install_css()
         self.add(self._build_content())
         self.show_all()
+        self._update_status_items()
 
     def _configure_webkit_persistence(self) -> None:
         if WebKit2 is None:
@@ -1308,6 +1316,7 @@ class AiBarWindow(Gtk.Window):
             if item.get("type") == "screenshot":
                 continue
             status_flow.add(self._build_status_button(item))
+        status_flow.add(self._build_battery_status())
 
         tray_flow = Gtk.FlowBox()
         tray_flow.get_style_context().add_class("status-flow")
@@ -1350,7 +1359,7 @@ class AiBarWindow(Gtk.Window):
         self._rebuild_window_buttons([])
 
         refresh = int(self.config.get("tray", {}).get("status_refresh_seconds", 5))
-        if self.status_labels or self.volume_controls:
+        if self.status_labels or self.volume_controls or self.battery_statuses:
             self._update_status_items()
             GLib.timeout_add_seconds(max(1, refresh), self._update_status_items)
 
@@ -1414,8 +1423,22 @@ class AiBarWindow(Gtk.Window):
 
         return button
 
+    def _build_battery_status(self) -> Gtk.Widget:
+        button = Gtk.Button()
+        button.get_style_context().add_class("status-button")
+        add_accent_color(button, 4)
+        button.set_relief(Gtk.ReliefStyle.NONE)
+        icon = Gtk.Image()
+        label = Gtk.Label(label="")
+        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        inner.pack_start(icon, False, False, 0)
+        inner.pack_start(label, False, False, 0)
+        button.add(inner)
+        self.battery_statuses.append((button, label, icon))
+        return button
+
     def _build_volume_control(self, item: dict[str, Any]) -> Gtk.Widget:
-        control = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        control = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         control.get_style_context().add_class("volume-control")
 
         mute_button = Gtk.Button()
@@ -2427,6 +2450,22 @@ class AiBarWindow(Gtk.Window):
             item_type = item.get("type")
             if item_type == "wifi":
                 label.set_text(read_wifi_status())
+
+        battery = read_battery_state()
+        for button, label, icon in getattr(self, "battery_statuses", []):
+            if battery is None:
+                button.hide()
+                continue
+            label.set_text(f"{battery.percent}%")
+            status_label = {
+                "Charging": "in carica",
+                "Discharging": "in scarica",
+                "Full": "carica",
+                "Not charging": "collegata",
+            }.get(battery.status, battery.status.lower())
+            button.set_tooltip_text(f"Batteria: {battery.percent}% · {status_label}")
+            icon.set_from_icon_name(battery_icon_name(battery), Gtk.IconSize.BUTTON)
+            button.show_all()
 
         if self.volume_controls:
             state = read_volume_state()
@@ -3853,6 +3892,34 @@ def run_text_command(argv: list[str], timeout: float = 2.0) -> str:
     if completed.returncode != 0:
         return ""
     return completed.stdout.strip()
+
+
+def read_battery_state(
+    power_supply_path: Path = Path("/sys/class/power_supply"),
+) -> BatteryState | None:
+    try:
+        supplies = sorted(power_supply_path.iterdir())
+    except OSError:
+        return None
+
+    for supply in supplies:
+        try:
+            if (supply / "type").read_text(encoding="utf-8").strip().lower() != "battery":
+                continue
+            percent = int((supply / "capacity").read_text(encoding="utf-8").strip())
+            status = (supply / "status").read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):
+            continue
+        return BatteryState(percent=max(0, min(100, percent)), status=status)
+    return None
+
+
+def battery_icon_name(state: BatteryState) -> str:
+    level = min(100, (state.percent // 10) * 10)
+    if state.status.lower() == "full" and state.percent >= 100:
+        return "battery-level-100-charged-symbolic"
+    charging = "-charging" if state.status.lower() == "charging" else ""
+    return f"battery-level-{level}{charging}-symbolic"
 
 
 def recording_audio_sources() -> list[tuple[str, str]]:

@@ -697,6 +697,7 @@ class ClockLayoutTests(unittest.TestCase):
             },
         }
         window.status_labels = []
+        window.battery_statuses = []
         window.volume_controls = []
         window.tray_host = None
         window.xapp_tray_host = None
@@ -706,7 +707,7 @@ class ClockLayoutTests(unittest.TestCase):
         status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
-        reload_button, volume_control, display_button = status_flow.get_children()
+        reload_button, volume_control, display_button, battery_button = status_flow.get_children()
         self.assertEqual(reload_button.get_tooltip_text(), "Reload")
         self.assertEqual(len(reload_button.get_child().get_children()), 1)
         tray_row = status_area.get_children()[1]
@@ -1826,6 +1827,7 @@ class ClockLayoutTests(unittest.TestCase):
             "tray": {"items": [], "icon_size": 24, "xembed": True},
         }
         window.status_labels = []
+        window.battery_statuses = []
         window.volume_controls = []
         window.tray_host = None
         window.xapp_tray_host = None
