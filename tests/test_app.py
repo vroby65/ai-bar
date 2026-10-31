@@ -659,11 +659,12 @@ class ClockLayoutTests(unittest.TestCase):
                     allocation.height = row.get_preferred_height_for_width(width).natural_height
                     row.size_allocate(allocation)
                     positions = [widget.get_allocation() for widget in widgets]
+                    volume_widths.append(positions[1].width)
                     self.assertEqual(len({position.y for position in positions}), 1)
+                    self.assertEqual(len({position.height for position in positions}), 1)
                     self.assertEqual(positions[-1].x + positions[-1].width, width)
                     for index in (0, 2, 3, 4):
                         self.assertEqual(positions[index].width, fixed_widths[index])
-                    volume_widths.append(positions[1].width)
             self.assertGreater(volume_widths[2], volume_widths[1])
             self.assertEqual(volume_widths[3], volume_widths[1])
             widgets[-1].hide()

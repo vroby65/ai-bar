@@ -856,16 +856,17 @@ class NaturalWrapBox(Gtk.Fixed):
                 child.get_preferred_height_for_width(child_width)[1]
                 for child, child_width in row
             ]
+            row_height = max(heights)
             x = allocation.x
-            for (child, child_width), child_height in zip(row, heights):
+            for child, child_width in row:
                 child_allocation = Gdk.Rectangle()
                 child_allocation.x = x
                 child_allocation.y = y
                 child_allocation.width = child_width
-                child_allocation.height = child_height
+                child_allocation.height = row_height
                 child.size_allocate(child_allocation)
                 x += child_width + self.spacing
-            y += max(heights) + self.spacing
+            y += row_height + self.spacing
 
 
 CSS = """
