@@ -312,13 +312,18 @@ def focus_x11_window(xid: int) -> bool:
 
     display = None
     errors: list[Any] = []
+
+    def handle_error(error: Any, _request: Any) -> int:
+        errors.append(error)
+        return 1
+
     try:
         display = xlib_display.Display()
         window = display.create_resource_object("window", xid)
         window.set_input_focus(
             X.RevertToParent,
             X.CurrentTime,
-            onerror=errors.append,
+            onerror=handle_error,
         )
         display.sync()
         return not errors
@@ -3175,7 +3180,6 @@ class AiBarWindow(Gtk.Window):
                     return
                 title = notebook.get_tab_label_text(page) or "Scheda"
                 command = key.removeprefix("window:")
-                self.embedded.pop(key, None)
                 page.destroy()
                 self._switch_embedded_window(command, title)
                 return

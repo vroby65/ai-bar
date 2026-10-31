@@ -32,6 +32,7 @@ from ai_bar.app import (
     configuration_assistant_command,
     recording_audio_sources,
     find_window_by_xid,
+    focus_x11_window,
     release_x11_window,
     xlib_display,
     maximize_launched_window,
@@ -452,6 +453,17 @@ class KeyboardNavigationTests(unittest.TestCase):
 
 
 class ClockLayoutTests(unittest.TestCase):
+    @unittest.skipIf(X is None, "python-xlib not available")
+    def test_focus_returns_false_for_a_destroyed_x11_window(self):
+        display = xlib_display.Display()
+        window = display.screen().root.create_window(
+            0, 0, 10, 10, 0, X.CopyFromParent)
+        xid = window.id
+        window.destroy()
+        display.sync()
+        self.assertFalse(focus_x11_window(xid))
+        display.close()
+
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     def test_clock_click_opens_google_calendar_in_chrome(self, _timeout_add):
         window = AiBarWindow.__new__(AiBarWindow)
@@ -2985,9 +2997,10 @@ class DetachTests(unittest.TestCase):
         window = self._window()
         notebook = Gtk.Notebook()
         window.terminal_notebook = notebook
-        socket = Gtk.Socket()
         key = "window:menugui"
+        socket = window._build_embedded_socket(key)
         window.embedded = {key: socket}
+        window.embedded_window_xids = {key: 20}
         window._switch_embedded_window = Mock()
         notebook.append_page(socket, Gtk.Label(label="Menu"))
         notebook.show_all()
@@ -2996,6 +3009,7 @@ class DetachTests(unittest.TestCase):
         window._reload_page(socket)
 
         self.assertNotIn(key, window.embedded)
+        self.assertNotIn(key, window.embedded_window_xids)
         self.assertEqual(notebook.page_num(socket), -1)
         window._switch_embedded_window.assert_called_once_with("menugui", "Menu")
 
