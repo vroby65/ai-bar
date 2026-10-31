@@ -2818,6 +2818,8 @@ class AiBarWindow(Gtk.Window):
             self.embedded_window_xids.pop(key, None)
 
     def _focus_embedded_window(self, socket: Gtk.Socket) -> bool:
+        if not socket.get_mapped():
+            return False
         key = self._page_key(socket)
         if key is not None:
             xid = self.embedded_window_xids.get(key)

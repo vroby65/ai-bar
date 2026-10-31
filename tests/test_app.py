@@ -1871,6 +1871,18 @@ class ClockLayoutTests(unittest.TestCase):
         socket.grab_focus.assert_called_once_with()
         focus_x11_window.assert_called_once_with(20)
 
+    def test_delayed_embedded_focus_does_not_focus_a_hidden_page(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        socket = Mock()
+        socket.get_mapped.return_value = False
+        window.terminals = {}
+        window.embedded = {"window:app": socket}
+        window.embedded_window_xids = {"window:app": 20}
+
+        with patch("ai_bar.app.focus_x11_window") as focus:
+            self.assertFalse(window._focus_embedded_window(socket))
+        focus.assert_not_called()
+
     def test_fast_window_is_not_mistaken_for_one_existing_before_launch(self):
         window = AiBarWindow.__new__(AiBarWindow)
         key = "window:" + command_to_shell_line(["menugui"])
