@@ -576,6 +576,10 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIn("border-bottom: 1px solid #4a5054;", terminal_css)
         self.assertIn("box-shadow: none;", terminal_css)
 
+    def test_tool_and_session_buttons_have_rounder_corners(self):
+        rounded_css = CSS.split("button.launcher-button,\nbutton.session-button {", 1)[1].split("}", 1)[0]
+        self.assertIn("border-radius: 10px;", rounded_css)
+
     def test_tool_buttons_are_compact(self):
         launcher_css = CSS.split("button.launcher-button {", 1)[1].split("}", 1)[0]
 

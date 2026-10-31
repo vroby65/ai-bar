@@ -870,6 +870,11 @@ button.accent-red {
   background-color: #e75d62;
 }
 
+button.launcher-button,
+button.session-button {
+  border-radius: 10px;
+}
+
 button.launcher-button {
   min-height: 48px;
 }
