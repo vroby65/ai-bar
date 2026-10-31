@@ -580,6 +580,28 @@ class ClockLayoutTests(unittest.TestCase):
         rounded_css = CSS.split("button.launcher-button,\nbutton.session-button {", 1)[1].split("}", 1)[0]
         self.assertIn("border-radius: 10px;", rounded_css)
 
+    def test_volume_leaves_room_for_reload_and_three_status_buttons(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.volume_controls = []
+        window.status_labels = []
+        widgets = [window._build_session_button(
+            {"label": "Reload", "icon": "view-refresh-symbolic", "action": "reload"}, icon_only=True
+        ), window._build_volume_control({"command": ["pavucontrol"]})]
+        for icon in ("preferences-desktop-display-symbolic", "system-software-install-symbolic", "preferences-system-symbolic"):
+            widgets.append(window._build_status_button({"icon": icon, "icon_only": True}))
+        row = Gtk.Box(spacing=6)
+        for widget in widgets:
+            row.pack_start(widget, False, False, 0)
+        row.show_all()
+        try:
+            self.assertLessEqual(row.get_preferred_width().natural_width, 376)
+        finally:
+            row.destroy()
+            Gtk.StyleContext.remove_provider_for_screen(Gdk.Screen.get_default(), provider)
+
     def test_tool_buttons_are_compact(self):
         launcher_css = CSS.split("button.launcher-button {", 1)[1].split("}", 1)[0]
 

@@ -961,7 +961,7 @@ button.quick-launcher-button:checked {
 }
 
 scale.volume-slider {
-  min-width: 100px;
+  min-width: 65px;
 }
 
 .volume-percent {
