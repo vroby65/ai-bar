@@ -612,17 +612,6 @@ class ClockLayoutTests(unittest.TestCase):
         rounded_css = CSS.split("button.launcher-button,\nbutton.session-button {", 1)[1].split("}", 1)[0]
         self.assertIn("border-radius: 10px;", rounded_css)
 
-    def test_volume_fill_is_flat_and_has_no_animation_or_handle(self):
-        for node in ("trough", "highlight", "slider"):
-            node_css = CSS.split(f"scale.volume-slider {node} {{", 1)[1].split("}", 1)[0]
-            self.assertIn("background-image: none;", node_css)
-            self.assertIn("box-shadow: none;", node_css)
-            self.assertIn("transition: none;", node_css)
-        slider_css = CSS.split("scale.volume-slider slider {", 1)[1].split("}", 1)[0]
-        self.assertIn("background-color: transparent;", slider_css)
-        highlight_css = CSS.split("scale.volume-slider highlight {", 1)[1].split("}", 1)[0]
-        self.assertIn("margin: 0;", highlight_css)
-
     def test_volume_fill_tracks_system_level_without_changing_audio(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window.volume_controls = []
@@ -654,12 +643,32 @@ class ClockLayoutTests(unittest.TestCase):
         ), window._build_volume_control({"command": ["pavucontrol"]})]
         for icon in ("preferences-desktop-display-symbolic", "system-software-install-symbolic", "preferences-system-symbolic"):
             widgets.append(window._build_status_button({"icon": icon, "icon_only": True}))
-        row = Gtk.Box(spacing=6)
+        row = NaturalWrapBox(spacing=6)
         for widget in widgets:
-            row.pack_start(widget, False, False, 0)
+            row.add(widget)
         row.show_all()
         try:
             self.assertLessEqual(row.get_preferred_width().natural_width, 376)
+            fixed_widths = [widget.get_preferred_width().natural_width for widget in widgets]
+            minimum_width = sum(fixed_widths) + 6 * (len(widgets) - 1)
+            volume_widths = []
+            for width in (minimum_width, 376, 500, 376):
+                with self.subTest(width=width):
+                    allocation = Gdk.Rectangle()
+                    allocation.width = width
+                    allocation.height = row.get_preferred_height_for_width(width).natural_height
+                    row.size_allocate(allocation)
+                    positions = [widget.get_allocation() for widget in widgets]
+                    self.assertEqual(len({position.y for position in positions}), 1)
+                    self.assertEqual(positions[-1].x + positions[-1].width, width)
+                    for index in (0, 2, 3, 4):
+                        self.assertEqual(positions[index].width, fixed_widths[index])
+                    volume_widths.append(positions[1].width)
+            self.assertGreater(volume_widths[2], volume_widths[1])
+            self.assertEqual(volume_widths[3], volume_widths[1])
+            widgets[-1].hide()
+            row.size_allocate(allocation)
+            self.assertEqual(widgets[1].get_allocated_width(), volume_widths[-1] + fixed_widths[-1] + 6)
         finally:
             row.destroy()
             Gtk.StyleContext.remove_provider_for_screen(Gdk.Screen.get_default(), provider)
@@ -748,7 +757,7 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertTrue(screenshot_button.get_style_context().has_class("tray-icon-cell"))
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertIsInstance(status_flow, NaturalWrapBox)
-        self.assertFalse(volume_control.get_hexpand())
+        self.assertTrue(volume_control.get_hexpand())
         self.assertEqual(display_button.get_tooltip_text(), "Display")
         self.assertEqual(screenshot_button.get_tooltip_text(), "Screenshot")
         self.assertEqual(

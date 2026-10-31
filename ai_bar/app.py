@@ -802,8 +802,8 @@ class NaturalWrapBox(Gtk.Fixed):
         for child in self.get_children():
             if not child.get_visible():
                 continue
-            _minimum, natural = child.get_preferred_width()
-            child_width = min(natural, available)
+            minimum, natural = child.get_preferred_width()
+            child_width = min(minimum if child.get_hexpand() else natural, available)
             required = (
                 child_width if not row else row_width + self.spacing + child_width
             )
@@ -819,6 +819,15 @@ class NaturalWrapBox(Gtk.Fixed):
             )
         if row:
             rows.append(row)
+        for row in rows:
+            expanding = [index for index, (child, _width) in enumerate(row) if child.get_hexpand()]
+            if not expanding:
+                continue
+            extra = available - sum(child_width for _child, child_width in row) - self.spacing * (len(row) - 1)
+            share, remainder = divmod(extra, len(expanding))
+            for offset, index in enumerate(expanding):
+                child, child_width = row[index]
+                row[index] = (child, child_width + share + (offset < remainder))
         return rows
 
     def do_get_preferred_height(self) -> tuple[int, int]:
@@ -1033,40 +1042,6 @@ button.quick-launcher-button:checked {
 
 scale.volume-slider {
   min-width: 48px;
-}
-
-scale.volume-slider trough {
-  min-height: 10px;
-  background-color: #17191a;
-  background-image: none;
-  border: 0;
-  border-radius: 3px;
-  box-shadow: none;
-  transition: none;
-}
-
-scale.volume-slider highlight {
-  min-width: 0;
-  min-height: 10px;
-  margin: 0;
-  background-color: #f2f2ee;
-  background-image: none;
-  border: 0;
-  border-radius: 3px;
-  box-shadow: none;
-  transition: none;
-}
-
-scale.volume-slider slider {
-  min-width: 0;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background-color: transparent;
-  background-image: none;
-  box-shadow: none;
-  transition: none;
 }
 
 .volume-percent {
@@ -1474,6 +1449,7 @@ class AiBarWindow(Gtk.Window):
     def _build_volume_control(self, item: dict[str, Any]) -> Gtk.Widget:
         control = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         control.get_style_context().add_class("volume-control")
+        control.set_hexpand(True)
 
         mute_button = Gtk.Button()
         mute_button.get_style_context().add_class("volume-mute-button")
