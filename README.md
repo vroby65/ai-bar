@@ -150,6 +150,8 @@ Login forms in a web app can be filled from the system keyring. Nothing is store
 
 Embedding GUI programs (`target: "window"`) re-parents the program's first window into the panel using `Gtk.Socket` and libwnck. It is best effort: single-window GTK applications work well, but some programs do not tolerate being embedded (the decoration frame may remain, or the window may stay on the desktop); in that case the launcher still opens the program on the desktop. Web apps (`target: "url"`) require the `gir1.2-webkit2-4.1` package, installed by `install.sh`.
 
+Reloading the bar returns embedded native windows to the desktop. A launcher with a single executable can bring an existing window back into the bar when exactly one window has the matching application class.
+
 AI-bar waits for the window manager to release a GUI window before embedding it,
 so Openbox cannot move Chrome app windows back out of the panel during insertion.
 For ChatGPT login with a YubiKey, use Chrome's `--app=https://chatgpt.com` with

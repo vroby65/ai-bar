@@ -33,6 +33,7 @@ from ai_bar.app import (
     recording_audio_sources,
     find_window_by_xid,
     focus_x11_window,
+    restore_x11_window,
     release_x11_window,
     xlib_display,
     maximize_launched_window,
@@ -350,6 +351,7 @@ class ScreenRecordingTests(unittest.TestCase):
     def test_reload_and_destroy_finalize_the_recording(self, quit_main, execvp):
         window = SimpleNamespace(
             _stop_screen_recording=Mock(), xapp_tray_host=None, tray_host=None,
+            embedded_window_xids={},
             volume_update_timeout_id=None, panel_animation_id=None,
             window_list_poll_id=None, super_toggle=None)
         AiBarWindow._reload(window)
@@ -359,6 +361,17 @@ class ScreenRecordingTests(unittest.TestCase):
         AiBarWindow._on_destroy(window, window)
         window._stop_screen_recording.assert_called_once_with(wait=True)
         quit_main.assert_called_once_with()
+
+    @patch("ai_bar.app.os.execvp")
+    @patch("ai_bar.app.restore_x11_window")
+    def test_reload_restores_embedded_windows_before_exec(self, restore, execvp):
+        window = SimpleNamespace(
+            _stop_screen_recording=Mock(), xapp_tray_host=None, tray_host=None,
+            embedded_window_xids={"window:chatgpt": 20},
+        )
+        AiBarWindow._reload(window)
+        restore.assert_called_once_with(20)
+        execvp.assert_called_once()
 
     @patch("ai_bar.app.Gio.Subprocess.new")
     @patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"})
@@ -1924,6 +1937,39 @@ class ClockLayoutTests(unittest.TestCase):
         socket.add_id.assert_called_once_with(20)
         self.assertEqual(window.embedded_window_xids[key], 20)
 
+    def test_existing_single_instance_window_is_embedded_without_relaunch(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        existing = Mock()
+        existing.get_xid.return_value = 20
+        existing.get_class_group_name.return_value = "Chatgpt"
+        existing.is_skip_tasklist.return_value = False
+        window.wnck_screen = Mock()
+        window.wnck_screen.get_windows_stacked.return_value = [existing]
+        window.own_xid = 99
+        window.terminals = {}
+        window.embedded = {}
+        window.embedded_window_xids = {}
+        window.detached = {}
+        window.terminal_notebook = Mock()
+        window.terminal_notebook.append_page.return_value = 1
+        window.present = Mock()
+        socket = Mock()
+
+        with (
+            patch("ai_bar.app.Gtk.Socket", return_value=socket),
+            patch("ai_bar.app.subprocess.Popen") as launch,
+            patch("ai_bar.app.GLib.timeout_add") as timeout_add,
+            patch("ai_bar.app.release_x11_window", return_value=True),
+        ):
+            window._switch_embedded_window(["chatgpt"], "ChatGPT")
+            realize = socket.connect.call_args.args
+            realize[1](socket, *realize[2:])
+            timeout_add.call_args.args[1]()
+
+        launch.assert_not_called()
+        socket.add_id.assert_called_once_with(20)
+        self.assertEqual(window.embedded_window_xids["window:chatgpt"], 20)
+
     def test_window_manager_releases_window_before_it_is_embedded(self):
         window = AiBarWindow.__new__(AiBarWindow)
         socket = Mock()
@@ -1989,6 +2035,24 @@ class ClockLayoutTests(unittest.TestCase):
         client.delete_property(state)
         display.sync()
         self.assertTrue(release_x11_window(client.id))
+
+    @unittest.skipIf(X is None, "python-xlib not available")
+    def test_embedded_window_is_restored_to_desktop_before_reload(self):
+        display = xlib_display.Display()
+        self.addCleanup(display.close)
+        root = display.screen().root
+        parent = root.create_window(0, 0, 100, 100, 0, X.CopyFromParent)
+        self.addCleanup(parent.destroy)
+        client = parent.create_window(0, 0, 10, 10, 0, X.CopyFromParent)
+        self.addCleanup(client.destroy)
+        parent.map()
+        client.map()
+        display.sync()
+
+        restore_x11_window(client.id)
+        display.sync()
+        self.assertEqual(client.query_tree().parent.id, root.id)
+        self.assertEqual(client.get_attributes().map_state, X.IsViewable)
 
     def test_destroyed_socket_stops_waiting_for_window_release(self):
         window = AiBarWindow.__new__(AiBarWindow)

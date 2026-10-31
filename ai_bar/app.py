@@ -334,6 +334,20 @@ def focus_x11_window(xid: int) -> bool:
             display.close()
 
 
+def restore_x11_window(xid: int) -> None:
+    if X is None or xlib_display is None:
+        return
+    display = xlib_display.Display()
+    try:
+        window = display.create_resource_object("window", xid)
+        window.unmap()
+        window.reparent(display.screen().root, 0, 0)
+        window.map()
+        display.sync()
+    finally:
+        display.close()
+
+
 def release_x11_window(xid: int) -> bool:
     if X is None or xlib_display is None:
         return True
@@ -2770,24 +2784,40 @@ class AiBarWindow(Gtk.Window):
         if widget is None:
             try:
                 self.wnck_screen.force_update()
+                windows = self.wnck_screen.get_windows_stacked()
                 existing_xids = {
                     int(window.get_xid())
-                    for window in self.wnck_screen.get_windows_stacked()
+                    for window in windows
                 }
             except Exception as exc:
                 print(f"ai-bar: stato finestre non disponibile: {exc}", file=sys.stderr)
                 self._launch(command)
                 return
             try:
-                if isinstance(command, str):
-                    subprocess.Popen(command, shell=True, start_new_session=True)
-                else:
-                    subprocess.Popen(command, start_new_session=True)
-            except Exception as exc:
-                self._show_error(f"Comando non avviato: {command}\n{exc}")
-                return
+                args = shlex.split(command) if isinstance(command, str) else command
+            except ValueError:
+                args = []
+            matches = []
+            if len(args) == 1:
+                app_name = os.path.basename(args[0]).casefold()
+                for window in windows:
+                    name = window.get_class_group_name()
+                    if (isinstance(name, str) and name.casefold() == app_name
+                            and not window.is_skip_tasklist()
+                            and int(window.get_xid()) not in self.embedded_window_xids.values()):
+                        matches.append(int(window.get_xid()))
+            existing_xid = matches[0] if len(matches) == 1 else None
+            if existing_xid is None:
+                try:
+                    if isinstance(command, str):
+                        subprocess.Popen(command, shell=True, start_new_session=True)
+                    else:
+                        subprocess.Popen(command, start_new_session=True)
+                except Exception as exc:
+                    self._show_error(f"Comando non avviato: {command}\n{exc}")
+                    return
             socket = self._build_embedded_socket(key)
-            socket.connect("realize", self._embed_launched_window, existing_xids)
+            socket.connect("realize", self._embed_launched_window, existing_xids, existing_xid)
             widget = socket
             self.embedded[key] = socket
             page = self.terminal_notebook.append_page(
@@ -2828,7 +2858,7 @@ class AiBarWindow(Gtk.Window):
         return False
 
     def _embed_launched_window(
-        self, socket: Gtk.Socket, existing_xids: set[int]
+        self, socket: Gtk.Socket, existing_xids: set[int], existing_xid: int | None = None
     ) -> None:
         if self.wnck_screen is None:
             return
@@ -2836,7 +2866,7 @@ class AiBarWindow(Gtk.Window):
         if key is None:
             return
         attempts_remaining = EMBED_POLL_ATTEMPTS
-        pending_xid = None
+        pending_xid = existing_xid
 
         def embed_when_ready() -> bool:
             nonlocal attempts_remaining, pending_xid
@@ -3432,6 +3462,8 @@ class AiBarWindow(Gtk.Window):
 
     def _reload(self) -> None:
         self._stop_screen_recording(wait=True)
+        for xid in list(self.embedded_window_xids.values()):
+            restore_x11_window(xid)
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.stop()
         if self.tray_host is not None:
