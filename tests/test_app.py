@@ -21,6 +21,7 @@ from ai_bar.app import (
     CSS,
     NaturalWrapBox,
     ToolNotebook,
+    VolumeState,
     RecordingAreaSelector,
     WindowInfo,
     X,
@@ -610,6 +611,36 @@ class ClockLayoutTests(unittest.TestCase):
     def test_tool_and_session_buttons_have_rounder_corners(self):
         rounded_css = CSS.split("button.launcher-button,\nbutton.session-button {", 1)[1].split("}", 1)[0]
         self.assertIn("border-radius: 10px;", rounded_css)
+
+    def test_volume_fill_is_flat_and_has_no_animation_or_handle(self):
+        for node in ("trough", "highlight", "slider"):
+            node_css = CSS.split(f"scale.volume-slider {node} {{", 1)[1].split("}", 1)[0]
+            self.assertIn("background-image: none;", node_css)
+            self.assertIn("box-shadow: none;", node_css)
+            self.assertIn("transition: none;", node_css)
+        slider_css = CSS.split("scale.volume-slider slider {", 1)[1].split("}", 1)[0]
+        self.assertIn("background-color: transparent;", slider_css)
+        highlight_css = CSS.split("scale.volume-slider highlight {", 1)[1].split("}", 1)[0]
+        self.assertIn("margin: 0;", highlight_css)
+
+    def test_volume_fill_tracks_system_level_without_changing_audio(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.volume_controls = []
+        control = window._build_volume_control({})
+        scale, label, icon = window.volume_controls[0]
+        try:
+            self.assertTrue(scale.get_has_origin())
+            with patch("ai_bar.app.GLib.timeout_add") as schedule:
+                for percent in (0, 25, 50, 100, 125):
+                    window._show_volume_state(VolumeState(percent, False), update_scale=True)
+                    self.assertEqual(scale.get_value(), min(percent, 100))
+                    self.assertEqual(label.get_text(), f"{percent}%")
+                window._show_volume_state(VolumeState(50, True), update_scale=True)
+                self.assertEqual(scale.get_value(), 50)
+                self.assertEqual(label.get_text(), "Mute")
+                schedule.assert_not_called()
+        finally:
+            control.destroy()
 
     def test_volume_leaves_room_for_reload_and_three_status_buttons(self):
         provider = Gtk.CssProvider()

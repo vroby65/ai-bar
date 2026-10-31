@@ -5,6 +5,9 @@ A GTK side panel similar to a desktop bar, with the date and time at the top, a 
 On laptops, the status area shows the battery percentage and charging state;
 the indicator is hidden when no battery is detected.
 
+The volume control fills in proportion to the current level, without animation.
+Drag the bar or use the arrow keys to adjust the volume.
+
 The default theme uses a flat graphite surface with solid accent colors for the
 main controls. Launcher and window buttons cycle through the accent palette,
 while page actions, quick launchers, and tray icons remain transparent.

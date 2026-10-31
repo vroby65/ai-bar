@@ -1035,6 +1035,40 @@ scale.volume-slider {
   min-width: 48px;
 }
 
+scale.volume-slider trough {
+  min-height: 10px;
+  background-color: #17191a;
+  background-image: none;
+  border: 0;
+  border-radius: 3px;
+  box-shadow: none;
+  transition: none;
+}
+
+scale.volume-slider highlight {
+  min-width: 0;
+  min-height: 10px;
+  margin: 0;
+  background-color: #f2f2ee;
+  background-image: none;
+  border: 0;
+  border-radius: 3px;
+  box-shadow: none;
+  transition: none;
+}
+
+scale.volume-slider slider {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  transition: none;
+}
+
 .volume-percent {
   min-width: 28px;
 }
