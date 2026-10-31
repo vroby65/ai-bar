@@ -1705,6 +1705,51 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(notebook.get_preferred_height_for_width(300).minimum_height, 0)
         notebook.destroy()
 
+    def test_embedded_client_does_not_overlap_bottom_controls(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.embedded = {}
+        host = Gtk.Window()
+        self.addCleanup(host.destroy)
+        host.set_default_size(400, 500)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.set_border_width(10)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.add(content)
+        host.add(scroller)
+        notebook = ToolNotebook()
+        notebook.set_show_tabs(False)
+        notebook.append_page(Gtk.Label(label="Terminal"), None)
+        socket = window._build_embedded_socket("window:test")
+        notebook.append_page(socket, None)
+        content.pack_start(notebook, True, True, 0)
+        footer = Gtk.Button(label="Session controls")
+        content.pack_start(footer, False, False, 0)
+        host.show_all()
+        notebook.set_current_page(1)
+        plug = Gtk.Plug.new(socket.get_id())
+        self.addCleanup(plug.destroy)
+        client = Gtk.DrawingArea()
+        client.set_size_request(300, 2000)
+        plug.add(client)
+        plug.show_all()
+
+        for height in (500, 400):
+            with self.subTest(height=height):
+                host.resize(400, height)
+                loop = GLib.MainLoop()
+                GLib.timeout_add(100, lambda: (loop.quit(), False)[1])
+                loop.run()
+                self.assertTrue(plug.get_embedded())
+                bounds = socket.get_allocation()
+                self.assertLessEqual(bounds.y + bounds.height, footer.get_allocation().y)
+                self.assertLessEqual(
+                    footer.get_allocation().y + footer.get_allocated_height(),
+                    host.get_allocated_height(),
+                )
+                self.assertEqual(scroller.get_vadjustment().get_upper(),
+                                 scroller.get_vadjustment().get_page_size())
+
     def test_a_click_on_the_content_asks_for_keyboard_focus(self):
         # Il pannello e' un DOCK: senza richiesta esplicita i campi di testo
         # restano non editabili finche' non si cambia scheda.
@@ -1966,7 +2011,7 @@ class ClockLayoutTests(unittest.TestCase):
             launched = True
 
         with (
-            patch("ai_bar.app.Gtk.Socket", return_value=socket),
+            patch("ai_bar.app.EmbeddedSocket", return_value=socket),
             patch("ai_bar.app.subprocess.Popen", side_effect=launch),
             patch("ai_bar.app.GLib.timeout_add") as timeout_add,
             patch("ai_bar.app.release_x11_window", return_value=True),
@@ -1998,7 +2043,7 @@ class ClockLayoutTests(unittest.TestCase):
         socket = Mock()
 
         with (
-            patch("ai_bar.app.Gtk.Socket", return_value=socket),
+            patch("ai_bar.app.EmbeddedSocket", return_value=socket),
             patch("ai_bar.app.subprocess.Popen") as launch,
             patch("ai_bar.app.GLib.timeout_add") as timeout_add,
             patch("ai_bar.app.release_x11_window", return_value=True),

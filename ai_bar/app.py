@@ -755,6 +755,15 @@ class ToolNotebook(Gtk.Notebook):
     def do_get_preferred_height_for_width(self, width: int) -> tuple[int, int]:
         return 0, 0
 
+
+class EmbeddedSocket(Gtk.Socket):
+    __gtype_name__ = "AiBarEmbeddedSocket"
+
+    def do_get_preferred_height(self) -> tuple[int, int]:
+        # A client's minimum height must not escape its notebook allocation.
+        return 0, 0
+
+
 class NaturalWrapBox(Gtk.Fixed):
     __gtype_name__ = "AiBarNaturalWrapBox"
 
@@ -2865,7 +2874,7 @@ class AiBarWindow(Gtk.Window):
             GLib.idle_add(self._focus_embedded_window, widget)
 
     def _build_embedded_socket(self, key: str) -> Gtk.Socket:
-        socket = Gtk.Socket()
+        socket = EmbeddedSocket()
         socket.set_hexpand(True)
         socket.set_vexpand(True)
         socket.connect("destroy", self._on_embedded_window_destroyed, key)
