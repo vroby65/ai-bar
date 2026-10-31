@@ -1235,6 +1235,10 @@ class AiBarWindow(Gtk.Window):
         status_flow.get_style_context().add_class("status-flow")
         status_flow.set_direction(Gtk.TextDirection.LTR)
 
+        for button_config in self.config.get("session_buttons", []):
+            if button_config.get("action") == "reload":
+                status_flow.add(self._build_session_button(button_config, icon_only=True))
+
         for item in self.config.get("tray", {}).get("items", []):
             if item.get("type") == "screenshot":
                 continue
@@ -1931,6 +1935,8 @@ class AiBarWindow(Gtk.Window):
 
         color_indices = (0, 4, 1, 7)
         for index, button_config in enumerate(self.config.get("session_buttons", [])):
+            if button_config.get("action") == "reload":
+                continue
             row.pack_start(
                 self._build_session_button(
                     button_config,
@@ -1944,7 +1950,7 @@ class AiBarWindow(Gtk.Window):
         return row
 
     def _build_session_button(
-        self, button_config: dict[str, Any], color_index: int = 0
+        self, button_config: dict[str, Any], color_index: int = 0, icon_only: bool = False
     ) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("session-button")
@@ -1979,7 +1985,8 @@ class AiBarWindow(Gtk.Window):
         label = Gtk.Label(label=str(button_config.get("label", "")))
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_max_width_chars(9)
-        inner.pack_start(label, False, False, 0)
+        if not icon_only:
+            inner.pack_start(label, False, False, 0)
 
         button.add(inner)
         return button

@@ -623,6 +623,7 @@ class ClockLayoutTests(unittest.TestCase):
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = {
             "panel": {"side": "left"},
+            "session_buttons": [{"label": "Reload", "icon": "view-refresh-symbolic", "action": "reload"}],
             "tray": {
                 "items": [
                     {"type": "volume"},
@@ -652,7 +653,9 @@ class ClockLayoutTests(unittest.TestCase):
         status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
-        volume_control, display_button = status_flow.get_children()
+        reload_button, volume_control, display_button = status_flow.get_children()
+        self.assertEqual(reload_button.get_tooltip_text(), "Reload")
+        self.assertEqual(len(reload_button.get_child().get_children()), 1)
         tray_row = status_area.get_children()[1]
         tray_flow, tools = tray_row.get_children()
         screenshot_button, record_button, spiral_button = tools.get_children()
@@ -1284,6 +1287,30 @@ class ClockLayoutTests(unittest.TestCase):
 
         window._switch_embedded_window.assert_called_once_with(["menugui"], "App")
         button.destroy()
+
+    def test_reload_button_is_icon_only(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._reload = Mock()
+        button = window._build_session_button(
+            {"label": "Reload", "icon": "view-refresh-symbolic", "action": "reload"},
+            icon_only=True,
+        )
+        self.assertEqual(button.get_tooltip_text(), "Reload")
+        self.assertEqual(len(button.get_child().get_children()), 1)
+        button.emit("clicked")
+        window._reload.assert_called_once_with()
+        button.destroy()
+
+    def test_bottom_session_row_excludes_reload_and_preserves_shutdown_order(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = {"session_buttons": [
+            {"label": "Reload", "action": "reload"},
+            {"label": "Freeze", "command": ["systemctl", "hibernate"]},
+            {"label": "Shutdown", "command": ["systemctl", "poweroff"]},
+        ]}
+        row = window._build_session_buttons()
+        self.assertEqual([b.get_tooltip_text() for b in row.get_children()], ["Freeze", "Shutdown"])
+        row.destroy()
 
     def test_legacy_reboot_button_requests_authorization(self):
         window = AiBarWindow.__new__(AiBarWindow)

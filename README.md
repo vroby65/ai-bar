@@ -113,7 +113,7 @@ with `config.example.json` and customize:
 - `quick_launchers[].integrated`: `true` embeds the GUI application in the panel; `false` (the default) opens it in its own window
 - `terminal.command`: shell or command to open in the embedded terminal
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
-- `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
+- `session_buttons`: session commands; reload appears as an icon at the left of the status controls, while logout, reboot, and powerdown appear at the bottom
 
 The default display button opens MATE's display settings (`mate-display-properties`). The default screenshot button immediately starts MATE Screenshot's area selector.
 
