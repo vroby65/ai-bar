@@ -1695,6 +1695,16 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(notebook.get_preferred_width().minimum_width, 0)
         notebook.destroy()
 
+    def test_tool_notebook_does_not_propagate_page_height(self):
+        notebook = ToolNotebook()
+        page = Gtk.DrawingArea()
+        page.set_size_request(300, 2000)
+        notebook.append_page(page, None)
+        notebook.show_all()
+        self.assertEqual(notebook.get_preferred_height().minimum_height, 0)
+        self.assertEqual(notebook.get_preferred_height_for_width(300).minimum_height, 0)
+        notebook.destroy()
+
     def test_a_click_on_the_content_asks_for_keyboard_focus(self):
         # Il pannello e' un DOCK: senza richiesta esplicita i campi di testo
         # restano non editabili finche' non si cambia scheda.

@@ -748,6 +748,12 @@ class ToolNotebook(Gtk.Notebook):
         # Tool content must fit the panel rather than enlarge its dock.
         return 0, 0
 
+    def do_get_preferred_height(self) -> tuple[int, int]:
+        # Keep bottom controls visible even when an embedded client is taller.
+        return 0, 0
+
+    def do_get_preferred_height_for_width(self, width: int) -> tuple[int, int]:
+        return 0, 0
 
 class NaturalWrapBox(Gtk.Fixed):
     __gtype_name__ = "AiBarNaturalWrapBox"
