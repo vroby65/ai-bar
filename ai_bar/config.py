@@ -304,9 +304,9 @@ def validate_config(config: dict[str, Any]) -> None:
                     "launcher_groups[].buttons[].app_id deve essere una stringa non vuota."
                 )
             target = button.get("target")
-            if target is not None and target not in {"terminal", "window", "url"}:
+            if target is not None and target not in {"terminal", "window", "url", "command"}:
                 raise ConfigError(
-                    "launcher_groups[].buttons[].target deve essere 'terminal', 'window' oppure 'url'."
+                    "launcher_groups[].buttons[].target deve essere 'terminal', 'window', 'url' oppure 'command'."
                 )
             if not isinstance(button.get("maximized", False), bool):
                 raise ConfigError("launcher_groups[].buttons[].maximized deve essere true oppure false.")

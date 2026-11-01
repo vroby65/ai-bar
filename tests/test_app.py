@@ -1318,6 +1318,22 @@ class ClockLayoutTests(unittest.TestCase):
         window._switch_embedded_window.assert_called_once_with(["caja"], "Caja")
         button.destroy()
 
+    def test_command_launcher_runs_on_every_click_without_a_page(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window._launch = Mock()
+        window.launcher_buttons = {}
+        button = window._build_launcher_button(
+            {"label": "Voice", "command": ["voice-launcher"], "target": "command"}
+        )
+
+        button.emit("clicked")
+        button.emit("clicked")
+
+        self.assertEqual(window._launch.call_count, 2)
+        window._launch.assert_called_with(["voice-launcher"], maximized=False)
+        self.assertEqual(window.launcher_buttons, {})
+        button.destroy()
+
     def test_url_launcher_uses_webview_switch(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window._switch_webview = Mock()

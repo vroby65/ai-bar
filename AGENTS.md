@@ -103,7 +103,9 @@ invoking `sudo -A` process; it must never persist or log it.
   and preserve rollback when `Gtk.Socket.add_id` fails.
 - Launcher targets have distinct semantics: no `target` launches an external
   program; `terminal` uses VTE; `window` attempts to embed an X11 window; `url` uses
-  WebKit and falls back to the system browser when WebKit is unavailable.
+  WebKit and falls back to the system browser when WebKit is unavailable;
+  `command` stays in its launcher group and runs an action on every click without
+  creating an embedded page.
 - Commands accept either a shell string or an argument list. Use
   `command_to_shell_line` and `terminal_argv` instead of rebuilding shell and quoting
   behavior elsewhere.

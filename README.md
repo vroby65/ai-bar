@@ -109,10 +109,11 @@ with `config.example.json` and customize:
   automatically when an open window is pinned
 - `launcher_groups[].buttons[].target`: where the button opens its content;
   omit it to launch an external application, or set one of these values for
-  content inside the panel:
+  tools in the panel:
   - `terminal`: runs the command in an embedded terminal tab
   - `window`: launches a GUI program and embeds its window in a tab of the terminal area (best effort, see below)
   - `url`: opens a web app by URL in an embedded WebKit tab (requires WebKit2; falls back to the system browser with `xdg-open` if it is missing)
+  - `command`: keeps an action button in its launcher group and runs the command on every click, without creating an embedded page
 - `launcher_groups[].buttons[].url`: the URL for `target: "url"` buttons
 - `launcher_groups[].buttons[].maximized`: opens the external window maximized
 - `quick_launchers`: ordered mini launch buttons shown above the Tools group; set it to `[]` to hide the area

@@ -7,6 +7,16 @@ from ai_bar.config import ConfigError, default_config, load_config, merge_config
 
 
 class MonitorConfigTests(unittest.TestCase):
+    def test_command_target_accepts_a_tools_action(self):
+        config = default_config()
+        config["launcher_groups"] = [{"title": "Tools", "buttons": [
+            {"label": "Voice", "target": "command", "command": ["voice-launcher"]},
+        ]}]
+        validate_config(config)
+        del config["launcher_groups"][0]["buttons"][0]["command"]
+        with self.assertRaises(ConfigError):
+            validate_config(config)
+
     def _config(self, **panel):
         config = default_config()
         config["panel"].update(panel)
