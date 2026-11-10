@@ -1,6 +1,8 @@
 import json
 import os
 import signal
+import subprocess
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -3206,14 +3208,54 @@ class DetachTests(unittest.TestCase):
         self.assertIs(notebook.get_nth_page(notebook.get_current_page()), replacement)
         self.assertEqual(notebook.get_tab_label_text(replacement), "Codex")
 
+    def test_terminal_reload_restores_focus_in_panel_and_detached_window(self):
+        for detached in (False, True):
+            with self.subTest(detached=detached):
+                window = self._window()
+                Gtk.Window.__init__(window)
+                self.addCleanup(window.destroy)
+                notebook = Gtk.Notebook()
+                window.add(notebook)
+                window.terminal_notebook = notebook
+                previous = Gtk.Entry()
+                replacement = Gtk.Entry()
+                window.terminals = {"codex": previous}
+                window.panel_width = 400
+                window._build_terminal = Mock(return_value=replacement)
+                host = window
+                if detached:
+                    host = Gtk.Window()
+                    self.addCleanup(host.destroy)
+                    host.add(previous)
+                    window.detached["codex"] = host
+                else:
+                    notebook.append_page(previous, Gtk.Label(label="Codex"))
+                host.show_all()
+                window._reload_page(previous)
+                loop = GLib.MainLoop()
+                GLib.timeout_add(30, lambda: (loop.quit(), False)[1])
+                loop.run()
+                self.assertIs(host.get_focus(), replacement)
+                self.assertTrue(replacement.get_mapped())
+                self.assertIs(window.terminals["codex"], replacement)
+
     def test_reload_button_reloads_the_current_web_app(self):
         window = self._window()
-        webview = Mock()
+        host = Gtk.Window()
+        self.addCleanup(host.destroy)
+        webview = Gtk.Entry()
+        webview.reload = Mock()
+        host.add(webview)
+        host.show_all()
         window.embedded = {"url:https://example.com": webview}
 
         window._reload_page(webview)
 
         webview.reload.assert_called_once_with()
+        loop = GLib.MainLoop()
+        GLib.timeout_add(20, lambda: (loop.quit(), False)[1])
+        loop.run()
+        self.assertIs(host.get_focus(), webview)
 
     def test_reload_button_restarts_the_current_window_tool(self):
         window = self._window()
@@ -3261,75 +3303,15 @@ class DetachTests(unittest.TestCase):
 
         self.assertTrue(window._detachable_page(socket))
 
-    def test_detaching_an_embedded_window_moves_its_xid_to_a_new_socket(self):
-        window = self._window()
-        source = Gtk.Socket()
-        replacement = Mock()
-        detached = Mock()
-        key = "window:menugui"
-        window.embedded = {key: source}
-        window.embedded_window_xids = {key: 20}
-        window.terminal_notebook = Mock()
-        window.terminal_notebook.get_current_page.return_value = 0
-        window.terminal_notebook.get_nth_page.return_value = source
-        window.terminal_notebook.get_tab_label_text.return_value = "Menu"
-        window.terminal_notebook.get_n_pages.return_value = 0
-        window._place_detached = Mock()
-        window._refresh_launcher_states = Mock()
-
-        with (
-            patch.object(
-                window,
-                "_build_embedded_socket",
-                return_value=replacement,
-                create=True,
-            ),
-            patch("ai_bar.app.Gtk.Window", return_value=detached),
-            patch("ai_bar.app.GLib.idle_add") as idle_add,
-        ):
-            window._detach_current_page()
-
-        replacement.add_id.assert_called_once_with(20)
-        self.assertIs(window.embedded[key], replacement)
-        self.assertIs(window.detached[key], detached)
-        window.terminal_notebook.remove.assert_called_once_with(source)
-        idle_add.assert_called_once_with(window._focus_embedded_window, replacement)
-
-    def test_reattaching_an_embedded_window_moves_its_xid_back_to_the_panel(self):
-        window = self._window()
-        source = Gtk.Socket()
-        replacement = Mock()
-        detached = Mock()
-        detached.get_child.return_value = source
-        detached.get_title.return_value = "Menu — ai-bar"
-        key = "window:menugui"
-        window.embedded = {key: source}
-        window.embedded_window_xids = {key: 20}
-        window.detached = {key: detached}
-        window.terminal_notebook = Mock()
-        window.terminal_notebook.append_page.return_value = 2
-        window.present = Mock()
-        window._refresh_launcher_states = Mock()
-
-        with (
-            patch.object(
-                window,
-                "_build_embedded_socket",
-                return_value=replacement,
-                create=True,
-            ),
-            patch("ai_bar.app.GLib.idle_add") as idle_add,
-        ):
-            window._reattach(key, detached)
-
-        replacement.add_id.assert_called_once_with(20)
-        self.assertIs(window.embedded[key], replacement)
-        self.assertNotIn(key, window.detached)
-        window.terminal_notebook.append_page.assert_called_once()
-        window.terminal_notebook.set_current_page.assert_called_once_with(2)
-        detached.remove.assert_called_once_with(source)
-        detached.destroy.assert_called_once_with()
-        idle_add.assert_called_once_with(window._focus_embedded_window, replacement)
+    @unittest.skipIf(X is None, "python-xlib unavailable")
+    def test_embedded_window_survives_detach_and_return_without_restart(self):
+        # GTK failures can terminate the process, so exercise real X11 windows
+        # in a child rather than taking down the entire test runner.
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("embedded_lifecycle.py"))],
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_the_page_key_is_found_among_both_kinds_of_tab(self):
         window = self._window()

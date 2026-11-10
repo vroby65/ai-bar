@@ -3189,24 +3189,11 @@ class AiBarWindow(Gtk.Window):
         window.set_titlebar(header)
 
         if isinstance(page, Gtk.Socket):
-            xid = self.embedded_window_xids.get(key)
-            if xid is None:
-                window.destroy()
-                return
-            detached_page = self._build_embedded_socket(key)
-            window.add(detached_page)
+            # Keep the realized socket and its foreign GdkWindow together.
+            # Transferring the same XID between sockets corrupts GTK ownership.
             window.show_all()
-            self.embedded[key] = detached_page
-            try:
-                detached_page.add_id(xid)
-            except Exception as exc:
-                self.embedded[key] = page
-                window.destroy()
-                self._show_error(f"Finestra non staccata: {exc}")
-                return
-            notebook.remove(page)
-            page.destroy()
-            GLib.idle_add(self._focus_embedded_window, detached_page)
+            page.reparent(window)
+            GLib.idle_add(self._focus_embedded_window, page)
         else:
             notebook.remove(page)
             window.add(page)
@@ -3253,27 +3240,10 @@ class AiBarWindow(Gtk.Window):
             return
 
         if isinstance(page, Gtk.Socket):
-            xid = self.embedded_window_xids.get(key)
-            if xid is None:
-                return
-            panel_page = self._build_embedded_socket(key)
-            index = notebook.append_page(
-                panel_page,
-                Gtk.Label(label=title or "Scheda"),
-            )
-            panel_page.show_all()
-            self.embedded[key] = panel_page
-            try:
-                panel_page.add_id(xid)
-            except Exception as exc:
-                self.embedded[key] = page
-                notebook.remove(panel_page)
-                panel_page.destroy()
-                self._show_error(f"Finestra non riattaccata: {exc}")
-                return
-            window.remove(page)
-            page.destroy()
-            GLib.idle_add(self._focus_embedded_window, panel_page)
+            page.reparent(notebook)
+            index = notebook.page_num(page)
+            notebook.set_tab_label_text(page, title or "Scheda")
+            GLib.idle_add(self._focus_embedded_window, page)
         else:
             window.remove(page)
             index = notebook.append_page(page, Gtk.Label(label=title or "Scheda"))
@@ -3314,6 +3284,7 @@ class AiBarWindow(Gtk.Window):
                 self._switch_embedded_window(command, title)
                 return
             page.reload()
+            GLib.idle_add(self._focus_reloaded_page, page)
             return
 
         notebook = self.terminal_notebook
@@ -3339,8 +3310,19 @@ class AiBarWindow(Gtk.Window):
 
         page.destroy()
         self.terminal = replacement
-        replacement.grab_focus()
+        GLib.idle_add(self._focus_reloaded_page, replacement)
         self._refresh_launcher_states(replacement)
+
+    def _focus_reloaded_page(self, page: Gtk.Widget) -> bool:
+        if page.get_mapped():
+            toplevel = page.get_toplevel()
+            toplevel.present()
+            gdk_window = toplevel.get_window()
+            gdk_window.focus(Gdk.CURRENT_TIME)
+            if hasattr(gdk_window, "get_xid"):
+                focus_x11_window(gdk_window.get_xid())
+            page.grab_focus()
+        return False
 
     def _refresh_launcher_states(self, page: Gtk.Widget | None = None) -> None:
         notebook = self.terminal_notebook

@@ -98,9 +98,10 @@ invoking `sudo -A` process; it must never persist or log it.
   the last page is detached, the panel area remains empty.
 - Closing a detached window returns its logical page to the panel instead of ending
   the session. A `Gtk.Socket` page is detachable only after its child XID is known;
-  detaching or reattaching it replaces the socket and reparents the same XID. Keep
-  `self.embedded`, `self.embedded_window_xids`, and `self.detached` synchronized,
-  and preserve rollback when `Gtk.Socket.add_id` fails.
+  detaching or reattaching it moves the same realized socket with
+  `Gtk.Widget.reparent`, preserving the XID. Do not transfer a foreign window
+  between two live sockets: GTK can crash when their GdkWindow ownership overlaps.
+  Keep `self.embedded`, `self.embedded_window_xids`, and `self.detached` synchronized.
 - Launcher targets have distinct semantics: no `target` launches an external
   program; `terminal` uses VTE; `window` attempts to embed an X11 window; `url` uses
   WebKit and falls back to the system browser when WebKit is unavailable;
