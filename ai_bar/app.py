@@ -1331,7 +1331,10 @@ class AiBarWindow(Gtk.Window):
             if item.get("type") == "screenshot":
                 continue
             status_flow.add(self._build_status_button(item))
-        status_flow.add(self._build_battery_status())
+        system_status = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        system_status.pack_start(self._build_battery_status(), False, False, 0)
+        system_status.pack_start(SSHServerButton(self._show_error), False, False, 0)
+        status_flow.add(system_status)
 
         tray_flow = Gtk.FlowBox()
         tray_flow.get_style_context().add_class("status-flow")
@@ -1360,7 +1363,6 @@ class AiBarWindow(Gtk.Window):
             if item.get("type") == "screenshot":
                 tools.pack_start(self._build_status_button(item, compact=True), False, False, 0)
         tools.pack_start(self._build_screen_recording_button(), False, False, 0)
-        tools.pack_start(SSHServerButton(self._show_error), False, False, 0)
         tools.pack_start(self._build_spiral_tile_button(), False, False, 0)
         tray_row.pack_end(tools, False, False, 0)
 

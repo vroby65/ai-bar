@@ -750,12 +750,14 @@ class ClockLayoutTests(unittest.TestCase):
         status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
-        reload_button, volume_control, display_button, battery_button = status_flow.get_children()
+        reload_button, volume_control, display_button, system_status = status_flow.get_children()
+        battery_button, ssh_button = system_status.get_children()
+        self.assertEqual(system_status.get_orientation(), Gtk.Orientation.HORIZONTAL)
         self.assertEqual(reload_button.get_tooltip_text(), "Reload")
         self.assertEqual(len(reload_button.get_child().get_children()), 1)
         tray_row = status_area.get_children()[1]
         tray_flow, tools = tray_row.get_children()
-        screenshot_button, record_button, ssh_button, spiral_button = tools.get_children()
+        screenshot_button, record_button, spiral_button = tools.get_children()
         ssh_icon, ssh_label = ssh_button.get_child().get_children()
         self.assertEqual(ssh_icon.get_icon_name()[0], "network-server-symbolic")
         self.assertEqual(ssh_label.get_text(), "SSH")

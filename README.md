@@ -126,7 +126,8 @@ The default display button opens MATE's display settings (`mate-display-properti
 
 The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
 
-The tools are ordered left to right: screenshot, recording, SSH server, and window tiling.
+The tools are ordered left to right: screenshot, recording, and window tiling.
+The SSH server control appears in the status row above, next to the battery.
 The SSH button turns green while the server or its activation socket is active.
 Click it to start or stop SSH, authorizing through the system password dialog.
 Stopping also stops `ssh.socket`, so incoming connections cannot restart the
