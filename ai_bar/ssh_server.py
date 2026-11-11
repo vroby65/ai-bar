@@ -51,11 +51,11 @@ class SSHServerButton(Gtk.Button):
         self._busy = False
         self._active = False
         self._units: tuple[str, ...] = ()
-        self.get_style_context().add_class("tray-icon-cell")
+        self.get_style_context().add_class("status-button")
         self.set_relief(Gtk.ReliefStyle.NONE)
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         content.pack_start(
-            Gtk.Image.new_from_icon_name("network-server-symbolic", Gtk.IconSize.MENU),
+            Gtk.Image.new_from_icon_name("network-server-symbolic", Gtk.IconSize.BUTTON),
             False, False, 0,
         )
         content.pack_start(Gtk.Label(label="SSH"), False, False, 0)

@@ -753,6 +753,9 @@ class ClockLayoutTests(unittest.TestCase):
         reload_button, volume_control, display_button, system_status = status_flow.get_children()
         battery_button, ssh_button = system_status.get_children()
         self.assertEqual(system_status.get_orientation(), Gtk.Orientation.HORIZONTAL)
+        self.assertTrue(ssh_button.get_style_context().has_class("status-button"))
+        self.assertTrue(ssh_button.get_style_context().has_class("accent-blue"))
+        self.assertFalse(ssh_button.get_style_context().has_class("tray-icon-cell"))
         self.assertEqual(reload_button.get_tooltip_text(), "Reload")
         self.assertEqual(len(reload_button.get_child().get_children()), 1)
         tray_row = status_area.get_children()[1]

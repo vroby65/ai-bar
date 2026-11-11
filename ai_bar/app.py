@@ -928,7 +928,8 @@ button.accent-orange {
   background-color: #f58a43;
 }
 
-button.accent-green {
+button.accent-green,
+button.status-button.ssh-active {
   background-color: #55c878;
 }
 
@@ -1111,10 +1112,6 @@ button.tray-icon-cell:checked {
 
 .resize-handle:hover {
   background: #4c8f72;
-}
-
-button.tray-icon-cell.ssh-active {
-  color: #8bd450;
 }
 
 button.tray-icon-cell.recording,
@@ -1333,7 +1330,9 @@ class AiBarWindow(Gtk.Window):
             status_flow.add(self._build_status_button(item))
         system_status = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         system_status.pack_start(self._build_battery_status(), False, False, 0)
-        system_status.pack_start(SSHServerButton(self._show_error), False, False, 0)
+        ssh_button = SSHServerButton(self._show_error)
+        add_accent_color(ssh_button, 0)
+        system_status.pack_start(ssh_button, False, False, 0)
         status_flow.add(system_status)
 
         tray_flow = Gtk.FlowBox()
