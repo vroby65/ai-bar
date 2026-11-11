@@ -126,7 +126,14 @@ The default display button opens MATE's display settings (`mate-display-properti
 
 The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
 
-The tools are ordered left to right: screenshot, recording, and window tiling.
+The tools are ordered left to right: screenshot, recording, SSH server, and window tiling.
+The SSH button turns green while the server or its activation socket is active.
+Click it to start or stop SSH, authorizing through the system password dialog.
+Stopping also stops `ssh.socket`, so incoming connections cannot restart the
+server. This controls the current session's service state; it does not change
+startup settings. It requires `openssh-server`, systemd, and `pkexec`; if the
+server is missing or its status cannot be read, the button is disabled.
+
 Click the recording button to choose the audio source, then drag a rectangle on
 the desktop to record that area on X11 at 30 fps, like the screenshot area selector.
 Release the left mouse button to start recording, or press Esc to cancel.

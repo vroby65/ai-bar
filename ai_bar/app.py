@@ -59,6 +59,7 @@ except Exception:  # pragma: no cover - exercised only on systems without python
     rq = None
 
 from .config import ConfigError, default_config, default_config_path, load_config
+from .ssh_server import SSHServerButton
 from .xapp_tray import XAppStatusIconHost
 from .xembed_tray import XEmbedTrayHost
 
@@ -1112,6 +1113,10 @@ button.tray-icon-cell:checked {
   background: #4c8f72;
 }
 
+button.tray-icon-cell.ssh-active {
+  color: #8bd450;
+}
+
 button.tray-icon-cell.recording,
 button.tray-icon-cell.recording:hover,
 button.tray-icon-cell.recording:active {
@@ -1355,6 +1360,7 @@ class AiBarWindow(Gtk.Window):
             if item.get("type") == "screenshot":
                 tools.pack_start(self._build_status_button(item, compact=True), False, False, 0)
         tools.pack_start(self._build_screen_recording_button(), False, False, 0)
+        tools.pack_start(SSHServerButton(self._show_error), False, False, 0)
         tools.pack_start(self._build_spiral_tile_button(), False, False, 0)
         tray_row.pack_end(tools, False, False, 0)
 
