@@ -756,7 +756,9 @@ class ClockLayoutTests(unittest.TestCase):
         tray_row = status_area.get_children()[1]
         tray_flow, tools = tray_row.get_children()
         screenshot_button, record_button, ssh_button, spiral_button = tools.get_children()
-        self.assertEqual(ssh_button.get_child().get_icon_name()[0], "network-server-symbolic")
+        ssh_icon, ssh_label = ssh_button.get_child().get_children()
+        self.assertEqual(ssh_icon.get_icon_name()[0], "network-server-symbolic")
+        self.assertEqual(ssh_label.get_text(), "SSH")
         self.assertEqual(record_button.get_tooltip_text(), "Registra lo schermo")
         self.assertTrue(screenshot_button.get_style_context().has_class("tray-icon-cell"))
         self.assertIsInstance(volume_control, Gtk.Box)
