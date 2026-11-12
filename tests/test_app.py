@@ -96,6 +96,7 @@ class ClockLayoutTests(unittest.TestCase):
             },
         }
         window.status_labels = []
+        window.battery_statuses = []
         window.volume_controls = []
         window.tray_host = None
         window.xapp_tray_host = None
@@ -106,11 +107,16 @@ class ClockLayoutTests(unittest.TestCase):
         status_area = window._build_tray_row()
 
         status_flow = status_area.get_children()[0]
-        assistant_button, volume_control = [
+        assistant_button, volume_control, system_status = [
             child.get_child() for child in status_flow.get_children()
         ]
         tray_row = status_area.get_children()[1]
         tray_flow, macro_recorder_button, spiral_button = tray_row.get_children()
+        battery_button, ssh_button = system_status.get_children()
+        self.assertEqual(system_status.get_orientation(), Gtk.Orientation.HORIZONTAL)
+        self.assertIs(battery_button, window.battery_statuses[0][0])
+        self.assertTrue(ssh_button.get_style_context().has_class("status-button"))
+        self.assertEqual(ssh_button.get_child().get_children()[1].get_text(), "SSH")
         self.assertIsInstance(assistant_button, Gtk.Button)
         self.assertIsInstance(volume_control, Gtk.Box)
         self.assertNotIn(assistant_button, volume_control.get_children())
@@ -914,6 +920,7 @@ class ClockLayoutTests(unittest.TestCase):
             "tray": {"items": [], "icon_size": 24, "xembed": True},
         }
         window.status_labels = []
+        window.battery_statuses = []
         window.volume_controls = []
         window.tray_host = None
         window.xapp_tray_host = None
