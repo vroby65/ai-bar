@@ -46,6 +46,12 @@ class PackagingTests(unittest.TestCase):
 
         self.assertIn("    yad\n", installer)
 
+    def test_installer_provides_screen_capture_dependencies(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        packages = installer.split("APT_PACKAGES=(", 1)[1].split(")", 1)[0].split()
+        self.assertIn("ffmpeg", packages)
+        self.assertIn("mate-screenshot", packages)
+
     def test_installer_enables_gnome_keyring_for_lightdm(self):
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
 
@@ -71,6 +77,8 @@ class PackagingTests(unittest.TestCase):
         end = installer.index(end_marker, start)
         shipped_config = json.loads(installer[start:end])
 
+        self.assertEqual(shipped_config["tray"]["items"][2]["command"],
+                         ["/usr/bin/mate-screenshot", "--area"])
         self.assertEqual(shipped_config["panel"]["side"], "left")
         self.assertEqual(shipped_config["launcher_groups"][1]["title"], "Tools")
         self.assertIn(

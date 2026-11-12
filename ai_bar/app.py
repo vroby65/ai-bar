@@ -26,7 +26,7 @@ gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("GdkX11", "3.0")
 gi.require_version("Vte", "2.91")
 
-from gi.repository import Gdk, GdkPixbuf, GdkX11, GLib, Gtk, Pango, Vte
+from gi.repository import Gdk, GdkPixbuf, GdkX11, Gio, GLib, Gtk, Pango, Vte
 
 try:
     gi.require_version("Wnck", "3.0")
@@ -405,6 +405,95 @@ class VolumeState:
     muted: bool
 
 
+class RecordingAreaSelector(Gtk.Dialog):
+    def __init__(self) -> None:
+        super().__init__(title="Trascina per selezionare l'area da registrare — Esc per annullare",
+                         type=Gtk.WindowType.POPUP)
+        root = Gdk.get_default_root_window()
+        self.width, self.height = root.get_width(), root.get_height()
+        self.background = Gdk.pixbuf_get_from_window(root, 0, 0, self.width, self.height)
+        self.start: tuple[int, int] | None = None
+        self.selection: Gdk.Rectangle | None = None
+        self.set_app_paintable(True)
+        self.move(0, 0)
+        self.set_default_size(self.width, self.height)
+        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
+                        | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.KEY_PRESS_MASK)
+        self.connect("draw", self._draw)
+        self.connect("button-press-event", self._press)
+        self.connect("motion-notify-event", self._motion)
+        self.connect("button-release-event", self._release)
+        self.connect("key-press-event", self._key)
+        self.connect("map", self._grab)
+        self.connect("unmap", lambda _widget: self.get_display().get_default_seat().ungrab())
+
+    def _grab(self, _widget: Gtk.Widget) -> None:
+        cursor = Gdk.Cursor.new_for_display(self.get_display(), Gdk.CursorType.CROSSHAIR)
+        status = self.get_display().get_default_seat().grab(
+            self.get_window(), Gdk.SeatCapabilities.ALL, False, cursor, None, None, None)
+        if status != Gdk.GrabStatus.SUCCESS:
+            GLib.idle_add(self.response, Gtk.ResponseType.CANCEL)
+
+    def _point(self, event: Gdk.Event) -> tuple[int, int]:
+        return (max(0, min(self.width, int(event.x))),
+                max(0, min(self.height, int(event.y))))
+
+    def _press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button == 1:
+            self.start = self._point(event)
+            self.selection = None
+            self.queue_draw()
+        return True
+
+    def _motion(self, _widget: Gtk.Widget, event: Gdk.EventMotion) -> bool:
+        if self.start is not None:
+            x, y = self._point(event)
+            rectangle = Gdk.Rectangle()
+            rectangle.x, rectangle.y = min(self.start[0], x), min(self.start[1], y)
+            rectangle.width, rectangle.height = abs(x - self.start[0]), abs(y - self.start[1])
+            self.selection = rectangle
+            self.queue_draw()
+        return True
+
+    def _release(self, widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button == 1 and self.start is not None:
+            self._motion(widget, event)
+            if self.selection.width > 0 and self.selection.height > 0:
+                self.response(Gtk.ResponseType.OK)
+        return True
+
+    def _key(self, _widget: Gtk.Widget, event: Gdk.EventKey) -> bool:
+        if event.keyval == Gdk.KEY_Escape:
+            self.response(Gtk.ResponseType.CANCEL)
+        return True
+
+    def _draw(self, _widget: Gtk.Widget, context: Any) -> bool:
+        if self.background is not None:
+            context.save()
+            context.scale(self.width / self.background.get_width(),
+                          self.height / self.background.get_height())
+            Gdk.cairo_set_source_pixbuf(context, self.background, 0, 0)
+            context.paint()
+            context.restore()
+        context.set_source_rgba(0, 0, 0, 0.35)
+        if self.selection is None:
+            context.paint()
+        else:
+            r = self.selection
+            for x, y, width, height in (
+                (0, 0, self.width, r.y), (0, r.y, r.x, r.height),
+                (r.x + r.width, r.y, self.width - r.x - r.width, r.height),
+                (0, r.y + r.height, self.width, self.height - r.y - r.height),
+            ):
+                context.rectangle(x, y, width, height)
+            context.fill()
+            context.set_source_rgb(1, 1, 1)
+            context.set_line_width(1)
+            context.rectangle(r.x + 0.5, r.y + 0.5, r.width - 1, r.height - 1)
+            context.stroke()
+        return True
+
+
 class X11SuperToggle:
     def __init__(self, callback: Callable[[], None]) -> None:
         self.callback = callback
@@ -688,6 +777,13 @@ button.launcher-button.icon-only-launcher {
   background: #4c8f72;
 }
 
+button.tray-icon-cell.recording,
+button.tray-icon-cell.recording:hover,
+button.tray-icon-cell.recording:active {
+  background-color: #c62828;
+  color: #ffffff;
+}
+
 .session-row {
   border-top: 1px solid #303638;
   padding-top: 8px;
@@ -706,6 +802,10 @@ class AiBarWindow(Gtk.Window):
         self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
         self.battery_statuses: list[tuple[Gtk.Button, Gtk.Label, Gtk.Image]] = []
         self.volume_controls: list[tuple[Gtk.Scale, Gtk.Label, Gtk.Image]] = []
+        self.recording_process: Gio.Subprocess | None = None
+        self.recording_path: Path | None = None
+        self.recording_stopping = False
+        self.recording_audio_source = ""
         self.volume_percent = 0
         self.volume_muted = False
         self.volume_should_unmute = False
@@ -869,6 +969,8 @@ class AiBarWindow(Gtk.Window):
         status_flow.set_direction(Gtk.TextDirection.LTR)
 
         for item in self.config.get("tray", {}).get("items", []):
+            if item.get("type") == "screenshot":
+                continue
             if item.get("type") == "volume":
                 self._add_flow_child(status_flow, self._build_configuration_assistant_button())
             self._add_flow_child(status_flow, self._build_status_button(item))
@@ -898,8 +1000,14 @@ class AiBarWindow(Gtk.Window):
 
         tray_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tray_row.pack_start(tray_flow, True, True, 0)
-        tray_row.pack_end(self._build_spiral_tile_button(), False, False, 0)
-        tray_row.pack_end(self._build_macro_recorder_button(), False, False, 0)
+        tools = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tools.set_direction(Gtk.TextDirection.LTR)
+        for item in self.config.get("tray", {}).get("items", []):
+            if item.get("type") == "screenshot":
+                tools.pack_start(self._build_status_button(item, compact=True), False, False, 0)
+        tools.pack_start(self._build_screen_recording_button(), False, False, 0)
+        tools.pack_start(self._build_spiral_tile_button(), False, False, 0)
+        tray_row.pack_end(tools, False, False, 0)
 
         self.window_flow = Gtk.FlowBox()
         self.window_flow.get_style_context().add_class("window-flow")
@@ -931,22 +1039,22 @@ class AiBarWindow(Gtk.Window):
         flow.insert(child, -1)
         return child
 
-    def _build_status_button(self, item: dict[str, Any]) -> Gtk.Widget:
+    def _build_status_button(self, item: dict[str, Any], compact: bool = False) -> Gtk.Widget:
         if item.get("type") == "volume":
             return self._build_volume_control(item)
 
         button = Gtk.Button()
-        button.get_style_context().add_class("status-button")
+        button.get_style_context().add_class("tray-icon-cell" if compact else "status-button")
         button.set_tooltip_text(str(item.get("label", "")))
         button.set_relief(Gtk.ReliefStyle.NONE)
 
         inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         icon_name = item.get("icon")
         if icon_name:
-            image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.BUTTON)
+            image = Gtk.Image.new_from_icon_name(str(icon_name), Gtk.IconSize.MENU if compact else Gtk.IconSize.BUTTON)
             inner.pack_start(image, False, False, 0)
 
-        if not item.get("icon_only", False):
+        if not compact and not item.get("icon_only", False):
             label = Gtk.Label(label=str(item.get("label", "")))
             label.set_ellipsize(Pango.EllipsizeMode.END)
             label.set_max_width_chars(14)
@@ -960,7 +1068,7 @@ class AiBarWindow(Gtk.Window):
             "/usr/bin/mate-screenshot",
             "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png",
         ]:
-            command = ["/usr/bin/mate-screenshot", "--interactive"]
+            command = ["/usr/bin/mate-screenshot", "--area"]
         if command:
             button.connect("clicked", lambda _button: self._launch(command))
 
@@ -1043,16 +1151,148 @@ class AiBarWindow(Gtk.Window):
         button.connect("clicked", self._tile_windows_spiral)
         return button
 
-    def _build_macro_recorder_button(self) -> Gtk.Widget:
-        button = Gtk.Button()
-        button.get_style_context().add_class("tray-icon-cell")
-        button.set_relief(Gtk.ReliefStyle.NONE)
-        button.set_tooltip_text("Avvia Macro Recorder")
-        image = Gtk.Image.new_from_icon_name("media-record-symbolic", Gtk.IconSize.MENU)
-        image.set_pixel_size(16)
-        button.add(image)
-        button.connect("clicked", lambda _button: self._launch(["macro-recorder"]))
-        return button
+    def _build_screen_recording_button(self) -> Gtk.Widget:
+        self.recording_button = Gtk.Button()
+        self.recording_button.get_style_context().add_class("tray-icon-cell")
+        self.recording_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.recording_button.set_tooltip_text("Registra lo schermo")
+        self.recording_button.add(Gtk.Image.new_from_icon_name(
+            "media-record-symbolic", Gtk.IconSize.MENU))
+        self.recording_button.connect("clicked", self._toggle_screen_recording)
+        return self.recording_button
+
+    def _choose_recording_audio_source(self) -> str | None:
+        sources = recording_audio_sources()
+        dialog = Gtk.Dialog(
+            title="Registra lo schermo", transient_for=self, flags=Gtk.DialogFlags.MODAL)
+        dialog.add_buttons("Annulla", Gtk.ResponseType.CANCEL, "Seleziona area…", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+        content = dialog.get_content_area()
+        content.set_border_width(16)
+        content.set_spacing(12)
+        content.add(Gtk.Label(label="Audio da registrare", xalign=0))
+        combo = Gtk.ComboBoxText()
+        renderer = combo.get_cells()[0]
+        renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
+        renderer.set_property("max-width-chars", 60)
+        combo.append("", "Senza audio")
+        for name, label in sources:
+            combo.append(name, label)
+        available = {name for name, _label in sources}
+        combo.set_active_id(self.recording_audio_source if self.recording_audio_source in available else "")
+        content.add(combo)
+        hint = Gtk.Label(
+            label="Scegli un microfono per la tua voce oppure l'audio del computer.\n"
+                  "Per aggiornare i dispositivi, chiudi e riapri questa finestra.",
+            xalign=0)
+        hint.set_line_wrap(True)
+        content.add(hint)
+        dialog.show_all()
+        response = dialog.run()
+        selected = combo.get_active_id()
+        dialog.destroy()
+        return selected if response == Gtk.ResponseType.OK else None
+
+    def _choose_recording_area(self) -> Gdk.Rectangle | None:
+        dialog = RecordingAreaSelector()
+        try:
+            dialog.show_all()
+            if dialog.run() != Gtk.ResponseType.OK:
+                return None
+            rectangle = dialog.selection
+            scale = dialog.get_scale_factor()
+            rectangle.x *= scale
+            rectangle.y *= scale
+            rectangle.width *= scale
+            rectangle.height *= scale
+            return rectangle
+        finally:
+            dialog.destroy()
+            Gdk.Display.get_default().sync()
+
+    def _toggle_screen_recording(self, _button: Gtk.Button) -> None:
+        if self.recording_process is not None:
+            self._stop_screen_recording()
+            return
+        if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            self._show_error("La registrazione dello schermo richiede una sessione X11.")
+            return
+        audio_source = self._choose_recording_audio_source()
+        if audio_source is None:
+            return
+        geometry = self._choose_recording_area()
+        if geometry is None:
+            return
+        video_directory = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_VIDEOS)
+        directory = Path(video_directory or Path.home() / "Videos") / "Registrazioni"
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            self.recording_path = directory / f"Schermo_{datetime.now():%Y-%m-%d_%H-%M-%S_%f}.mp4"
+            command = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-n",
+                "-thread_queue_size", "512", "-f", "x11grab", "-framerate", "30",
+                "-video_size", f"{geometry.width}x{geometry.height}",
+                "-i", f"{os.environ.get('DISPLAY', ':0')}+{geometry.x},{geometry.y}",
+            ]
+            if audio_source:
+                command += [
+                    "-thread_queue_size", "512", "-f", "pulse", "-i", audio_source,
+                    "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "128k",
+                    "-af", "aresample=async=1:first_pts=0",
+                ]
+            else:
+                command += ["-an"]
+            command += [
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p",
+                str(self.recording_path),
+            ]
+            self.recording_process = Gio.Subprocess.new(
+                command, Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+        except (GLib.Error, OSError) as exc:
+            self._show_error(f"Impossibile avviare la registrazione: {exc}")
+            return
+        self.recording_stopping = False
+        self.recording_audio_source = audio_source
+        self.recording_button.get_style_context().add_class("recording")
+        self.recording_button.get_child().set_from_icon_name(
+            "media-playback-stop-symbolic", Gtk.IconSize.MENU)
+        self.recording_button.set_tooltip_text("Ferma e salva la registrazione")
+        self.recording_process.communicate_utf8_async(None, None, self._screen_recording_finished)
+
+    def _stop_screen_recording(self, wait: bool = False) -> None:
+        process = self.recording_process
+        if process is None:
+            return
+        if not self.recording_stopping:
+            self.recording_stopping = True
+            process.send_signal(signal.SIGINT)
+            self.recording_button.set_sensitive(False)
+            self.recording_button.set_tooltip_text("Salvataggio della registrazione…")
+        if wait:
+            process.wait(None)
+            self.recording_process = None
+
+    def _screen_recording_finished(self, process: Gio.Subprocess, result: Gio.AsyncResult) -> None:
+        try:
+            _ok, _stdout, error = process.communicate_utf8_finish(result)
+            success = process.get_successful() or (
+                self.recording_stopping and process.get_if_exited()
+                and process.get_exit_status() == 255)
+        except GLib.Error as exc:
+            success, error = False, str(exc)
+        if process is not self.recording_process:
+            return
+        self.recording_process = None
+        self.recording_stopping = False
+        self.recording_button.set_sensitive(True)
+        self.recording_button.get_style_context().remove_class("recording")
+        self.recording_button.get_child().set_from_icon_name("media-record-symbolic", Gtk.IconSize.MENU)
+        self.recording_button.set_tooltip_text(
+            f"Video salvato: {self.recording_path}\nClicca per registrare ancora"
+            if success else "Registra lo schermo")
+        if not success:
+            self._show_error(f"Registrazione non riuscita: {error or 'errore di FFmpeg'}")
 
     def _open_configuration_assistant(self) -> None:
         config_path = self.config_path or default_config_path()
@@ -1439,6 +1679,7 @@ class AiBarWindow(Gtk.Window):
         return False
 
     def _on_destroy(self, _window: Gtk.Window) -> None:
+        self._stop_screen_recording(wait=True)
         if self.volume_update_timeout_id is not None:
             GLib.source_remove(self.volume_update_timeout_id)
             self.volume_update_timeout_id = None
@@ -2692,6 +2933,7 @@ class AiBarWindow(Gtk.Window):
             self._store_credentials(url, username, password)
 
     def _reload(self) -> None:
+        self._stop_screen_recording(wait=True)
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.stop()
         if self.tray_host is not None:
@@ -3054,6 +3296,29 @@ def run_text_command(argv: list[str], timeout: float = 2.0) -> str:
     if completed.returncode != 0:
         return ""
     return completed.stdout.strip()
+
+
+def recording_audio_sources() -> list[tuple[str, str]]:
+    output = run_text_command(["pactl", "--format=json", "list", "sources"])
+    try:
+        sources = json.loads(output)
+    except ValueError:
+        return []
+    if not isinstance(sources, list):
+        return []
+    choices = []
+    for source in sources:
+        if not isinstance(source, dict) or not source.get("name"):
+            continue
+        name = source["name"]
+        monitor = (bool(source.get("monitor_source")) or name.endswith(".monitor")
+                   or source.get("properties", {}).get("device.class") == "monitor")
+        kind = "Audio del computer" if monitor else "Microfono / ingresso"
+        label = source.get("description") or name
+        if source.get("mute"):
+            label += " (silenziato)"
+        choices.append((name, f"{kind} — {label}"))
+    return choices
 
 
 def volume_state_from_wpctl(output: str) -> VolumeState | None:
