@@ -26,6 +26,8 @@ APT_PACKAGES=(
     pavucontrol
     network-manager
     yad
+    ffmpeg
+    mate-screenshot
 )
 
 if [ "$EUID" -eq 0 ]; then
@@ -107,7 +109,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
         "type": "screenshot",
         "label": "Screenshot",
         "icon": "camera-photo-symbolic",
-        "command": ["/usr/bin/mate-screenshot", "/home/user/Immagini/screenshot_%Y-%m-%d_%H-%M-%S.png"],
+        "command": ["/usr/bin/mate-screenshot", "--area"],
         "icon_only": true
       }
     ]

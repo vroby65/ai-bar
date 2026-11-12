@@ -66,7 +66,7 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
 - `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
 
-The default screenshot button opens MATE Screenshot's interactive menu, where you can choose the capture mode and options.
+The default screenshot button immediately starts MATE Screenshot's area selector.
 
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
 
@@ -77,7 +77,18 @@ server through the system authentication dialog. Stopping SSH also stops socket
 activation. Install `openssh-server` separately to use this control; the button is
 disabled when the server is unavailable. It does not change startup settings.
 
-The recording button beside the small grid button launches `macro-recorder`. The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
+The tools at the right of the tray are ordered left to right: screenshot,
+screen recording, and window tiling. Click the recording button to choose no audio,
+a microphone/input, or computer playback, then drag a rectangle to record that
+area on X11 at 30 fps. Press Esc to cancel the area selection. The last audio
+choice is remembered until AI-bar restarts; disconnected sources fall back to no
+audio. The button turns red while recording. Click it again to stop and save an
+MP4 in `Registrazioni` inside your Videos folder; its tooltip shows the saved path.
+Reloading or closing AI-bar also stops and finalizes the video. Recording requires
+FFmpeg and screenshot capture requires MATE Screenshot, both included in the
+installer.
+
+The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
 
 The AI tool launchers open a separate terminal tab for each command. Returning to a tool that is already open selects its tab, keeps the process running in the background, and focuses the terminal. Tabs are hidden, so the button that opened the page on screen stays highlighted, the same way the window list marks the active window. `window` and `url` buttons work the same way: the app or web app is embedded in its own tab and keeps running while you switch to another tab. Web apps keep cookies and site data across restarts, and while a web tab is active you can use `Ctrl++` or `Ctrl+=` to zoom in and `Ctrl+-` to zoom out. In the terminal, use `Ctrl+Shift+C` and `Ctrl+Shift+V` to copy and paste, or use the context menu.
 

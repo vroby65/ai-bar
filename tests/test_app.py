@@ -89,7 +89,12 @@ class ClockLayoutTests(unittest.TestCase):
         window.config = {
             "panel": {"side": "left"},
             "tray": {
-                "items": [{"type": "volume"}],
+                "items": [
+                    {"type": "volume"},
+                    {"type": "screenshot", "label": "Screenshot",
+                     "icon": "camera-photo-symbolic",
+                     "command": ["/usr/bin/mate-screenshot", "--area"]},
+                ],
                 "icon_size": 24,
                 "xembed": False,
                 "status_refresh_seconds": 5,
@@ -111,7 +116,11 @@ class ClockLayoutTests(unittest.TestCase):
             child.get_child() for child in status_flow.get_children()
         ]
         tray_row = status_area.get_children()[1]
-        tray_flow, macro_recorder_button, spiral_button = tray_row.get_children()
+        tray_flow, tools = tray_row.get_children()
+        screenshot_button, record_button, spiral_button = tools.get_children()
+        self.assertEqual(screenshot_button.get_tooltip_text(), "Screenshot")
+        self.assertTrue(screenshot_button.get_style_context().has_class("tray-icon-cell"))
+        self.assertEqual(record_button.get_tooltip_text(), "Registra lo schermo")
         battery_button, ssh_button = system_status.get_children()
         self.assertEqual(system_status.get_orientation(), Gtk.Orientation.HORIZONTAL)
         self.assertIs(battery_button, window.battery_statuses[0][0])
@@ -122,10 +131,7 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertNotIn(assistant_button, volume_control.get_children())
         self.assertEqual(assistant_button.get_tooltip_text(), "Configura AI-bar con un agente")
         self.assertEqual(
-            macro_recorder_button.get_tooltip_text(), "Avvia Macro Recorder"
-        )
-        self.assertEqual(
-            macro_recorder_button.get_child().get_icon_name()[0],
+            record_button.get_child().get_icon_name()[0],
             "media-record-symbolic",
         )
         self.assertEqual(
@@ -133,7 +139,7 @@ class ClockLayoutTests(unittest.TestCase):
         )
         self.assertIsInstance(tray_flow, Gtk.FlowBox)
         self.assertEqual(
-            tray_row.query_child_packing(spiral_button)[3], Gtk.PackType.END
+            tray_row.query_child_packing(tools)[3], Gtk.PackType.END
         )
         self.assertEqual(window.window_flow.get_max_children_per_line(), 20)
         separator = status_area.get_children()[2]
@@ -145,13 +151,13 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIs(status_area.get_children()[3], window.window_flow)
         assistant_button.emit("clicked")
         window._open_configuration_assistant.assert_called_once_with()
-        macro_recorder_button.emit("clicked")
-        window._launch.assert_called_once_with(["macro-recorder"])
+        screenshot_button.emit("clicked")
+        window._launch.assert_called_once_with(["/usr/bin/mate-screenshot", "--area"])
         spiral_button.emit("clicked")
         window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
 
-    def test_legacy_screenshot_button_opens_the_interactive_menu(self):
+    def test_legacy_screenshot_button_starts_area_selection(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window._launch = Mock()
         button = window._build_status_button(
@@ -168,7 +174,7 @@ class ClockLayoutTests(unittest.TestCase):
         button.emit("clicked")
 
         window._launch.assert_called_once_with(
-            ["/usr/bin/mate-screenshot", "--interactive"]
+            ["/usr/bin/mate-screenshot", "--area"]
         )
         button.destroy()
 
