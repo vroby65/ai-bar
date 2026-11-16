@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -1295,7 +1296,13 @@ class AiBarWindow(Gtk.Window):
         self.date_label.get_style_context().add_class("clock-date")
         self.time_label.set_xalign(0.5)
         self.date_label.set_xalign(0.5)
-        self.clock_box.pack_start(self.time_label, False, False, 0)
+        self.public_ip_label = Gtk.Label(label="IP: —")
+        self.public_ip_label.set_xalign(0)
+        self.public_ip_label.get_style_context().add_class("clock-date")
+        self.time_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=CLOCK_HORIZONTAL_SPACING)
+        self.time_row.pack_start(self.public_ip_label, False, False, 0)
+        self.time_row.pack_start(self.time_label, True, True, 0)
+        self.clock_box.pack_start(self.time_row, False, False, 0)
         self.clock_box.pack_start(self.date_label, False, False, 0)
         wrapper.add(self.clock_box)
         wrapper.connect("button-press-event", self._on_clock_button_press)
@@ -1303,7 +1310,32 @@ class AiBarWindow(Gtk.Window):
 
         self._update_clock()
         GLib.timeout_add_seconds(1, self._update_clock)
+        self.public_ip_active = True
+        self._refresh_public_ip()
+        self.public_ip_timeout_id = GLib.timeout_add_seconds(60, self._refresh_public_ip)
+        wrapper.connect("destroy", self._stop_public_ip)
         return wrapper
+
+    def _refresh_public_ip(self) -> bool:
+        def fetch() -> None:
+            try:
+                with urllib.request.urlopen("https://api.ipify.org", timeout=5) as response:
+                    address = str(ipaddress.ip_address(response.read(128).decode("ascii").strip()))
+            except (OSError, ValueError):
+                address = "—"
+            GLib.idle_add(self._show_public_ip, address)
+
+        threading.Thread(target=fetch, daemon=True).start()
+        return True
+
+    def _show_public_ip(self, address: str) -> bool:
+        if self.public_ip_active:
+            self.public_ip_label.set_text(f"IP: {address}")
+        return False
+
+    def _stop_public_ip(self, _widget: Gtk.Widget) -> None:
+        self.public_ip_active = False
+        GLib.source_remove(self.public_ip_timeout_id)
 
     def _on_clock_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
         command = self.config.get("clock", {}).get("command")
@@ -2450,7 +2482,7 @@ class AiBarWindow(Gtk.Window):
         return True
 
     def _on_clock_size_allocate(self, _box: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
-        _time_min_width, time_width = self.time_label.get_preferred_width()
+        _time_min_width, time_width = self.time_row.get_preferred_width()
         _date_min_width, date_width = self.date_label.get_preferred_width()
         inline = clock_labels_fit_inline(
             allocation.width,

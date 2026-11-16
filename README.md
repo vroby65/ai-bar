@@ -80,6 +80,10 @@ behavior; to return to the buttons, hide and reopen the panel with Super.
 
 By default, left-click the date or time at the top of the panel to open Google Calendar in Google Chrome (`google-chrome`). Set `clock.command` to change this action or disable it with `null`.
 
+The public IP address appears to the left of the time. It is fetched from
+`https://api.ipify.org` in the background at startup and every minute; `IP: —`
+indicates that the address is unavailable.
+
 ## Configuration
 
 The default file is `$XDG_CONFIG_HOME/ai-bar/config.json`, falling back to

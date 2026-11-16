@@ -474,6 +474,57 @@ class KeyboardNavigationTests(unittest.TestCase):
 
 
 class ClockLayoutTests(unittest.TestCase):
+    def setUp(self):
+        thread_patch = patch("ai_bar.app.threading.Thread")
+        self.thread = thread_patch.start()
+        self.addCleanup(thread_patch.stop)
+        remove_patch = patch("ai_bar.app.GLib.source_remove")
+        remove_patch.start()
+        self.addCleanup(remove_patch.stop)
+
+    @patch("ai_bar.app.GLib.timeout_add_seconds", return_value=42)
+    @patch("ai_bar.app.GLib.source_remove")
+    def test_public_ip_precedes_time_and_stops_on_destroy(self, remove, timeout):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = default_config()
+        clock = window._build_clock()
+        self.assertEqual(window.time_row.get_children(),
+                         [window.public_ip_label, window.time_label])
+        self.assertEqual(window.public_ip_label.get_xalign(), 0)
+        self.assertEqual(window.public_ip_label.get_text(), "IP: —")
+        timeout.assert_any_call(60, window._refresh_public_ip)
+        clock.destroy()
+        remove.assert_called_once_with(42)
+        self.assertFalse(window._show_public_ip("203.0.113.7"))
+        self.assertEqual(window.public_ip_label.get_text(), "IP: —")
+
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    @patch("ai_bar.app.GLib.idle_add")
+    @patch("ai_bar.app.urllib.request.urlopen")
+    def test_public_ip_fetch_runs_in_worker_and_updates_via_idle(self, urlopen, idle, _timeout):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = default_config()
+        clock = window._build_clock()
+        self.addCleanup(clock.destroy)
+        fetch = self.thread.call_args.kwargs["target"]
+        urlopen.assert_not_called()
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = b"203.0.113.7\n"
+        fetch()
+        urlopen.assert_called_once_with("https://api.ipify.org", timeout=5)
+        idle.assert_called_once_with(window._show_public_ip, "203.0.113.7")
+        self.assertFalse(window._show_public_ip("203.0.113.7"))
+        self.assertEqual(window.public_ip_label.get_text(), "IP: 203.0.113.7")
+        for result in (b"invalid", OSError("offline")):
+            with self.subTest(result=result):
+                idle.reset_mock()
+                if isinstance(result, Exception):
+                    urlopen.side_effect = result
+                else:
+                    response.read.return_value = result
+                fetch()
+                idle.assert_called_once_with(window._show_public_ip, "—")
+
     @unittest.skipIf(X is None, "python-xlib not available")
     def test_focus_returns_false_for_a_destroyed_x11_window(self):
         display = xlib_display.Display()
