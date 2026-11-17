@@ -89,7 +89,8 @@ behavior; to return to the buttons, hide and reopen the panel with Super.
 By default, left-click the date or time at the top of the panel to open Google Calendar in Google Chrome (`google-chrome`). Set `clock.command` to change this action or disable it with `null`.
 
 The header is left-aligned: reload, large time, then the date above the public IP.
-The SSH server button sits beside the IP.
+The SSH server button sits beside the IP. Click the public IP to open
+[LibreSpeed](https://librespeed.org/) in the default browser.
 The IP is fetched from `https://api.ipify.org` in the background at startup and
 every minute. Its color reflects the HTTPS response time, including connection
 setup: green up to 200 ms, yellow up to 800 ms, red above 800 ms or on failure.

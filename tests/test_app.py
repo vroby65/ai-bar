@@ -511,13 +511,26 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(window.clock_box.get_halign(), Gtk.Align.START)
         self.assertEqual(window.time_label.get_xalign(), 0)
         ip, ssh = window.network_row.get_children()
-        self.assertIs(ip, window.public_ip_label)
+        self.assertIs(ip.get_child(), window.public_ip_label)
         self.assertTrue(ssh.get_style_context().has_class("clock-ssh"))
         self.assertEqual(ssh.get_child().get_children()[1].get_text(), "SSH")
         ssh._units = ("ssh.service",)
         start_work.reset_mock()
         ssh.emit("clicked")
         start_work.assert_called_once_with(True)
+
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    def test_clicking_public_ip_opens_librespeed_only_on_left_click(self, _timeout):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = default_config()
+        window._launch = Mock()
+        clock = window._build_clock()
+        self.addCleanup(clock.destroy)
+        for number in (2, 3, 1):
+            event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
+            event.button = number
+            self.assertEqual(window.public_ip_link.emit("button-press-event", event), number == 1)
+        window._launch.assert_called_once_with(["xdg-open", "https://librespeed.org/"])
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     def test_panel_reload_is_beside_time_and_keeps_its_action(self, _timeout):

@@ -1373,7 +1373,13 @@ class AiBarWindow(Gtk.Window):
         self.clock_details.set_valign(Gtk.Align.CENTER)
         self.clock_details.pack_start(self.date_label, False, False, 0)
         self.network_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
-        self.network_row.pack_start(self.public_ip_label, False, False, 0)
+        self.public_ip_link = Gtk.EventBox()
+        self.public_ip_link.set_visible_window(False)
+        self.public_ip_link.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        self.public_ip_link.set_tooltip_text("Apri LibreSpeed nel browser")
+        self.public_ip_link.add(self.public_ip_label)
+        self.public_ip_link.connect("button-press-event", self._on_public_ip_button_press)
+        self.network_row.pack_start(self.public_ip_link, False, False, 0)
         ssh_button = SSHServerButton(self._show_error)
         add_accent_color(ssh_button, 0)
         ssh_button.get_style_context().add_class("clock-ssh")
@@ -1396,6 +1402,12 @@ class AiBarWindow(Gtk.Window):
         self.public_ip_timeout_id = GLib.timeout_add_seconds(60, self._refresh_public_ip)
         wrapper.connect("destroy", self._stop_public_ip)
         return wrapper
+
+    def _on_public_ip_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button != 1:
+            return False
+        self._launch(["xdg-open", "https://librespeed.org/"])
+        return True
 
     def _refresh_public_ip(self) -> bool:
         def fetch() -> None:
