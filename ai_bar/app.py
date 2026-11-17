@@ -3300,7 +3300,7 @@ class AiBarWindow(Gtk.Window):
         window.connect("delete-event", self._on_detached_closed, key)
 
         header = Gtk.HeaderBar(title=title)
-        header.set_show_close_button(True)
+        header.set_show_close_button(False)
         reload_button = Gtk.Button()
         reload_button.get_style_context().add_class("page-action-button")
         reload_button.set_tooltip_text("Ricarica il tool corrente")

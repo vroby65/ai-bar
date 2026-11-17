@@ -3217,6 +3217,12 @@ class DetachTests(unittest.TestCase):
         window._detach_current_page()
 
         detached = window.detached["zsh"]
+        self.assertFalse(detached.get_titlebar().get_show_close_button())
+        self.assertEqual(
+            sum(isinstance(child, Gtk.Button)
+                for child in detached.get_titlebar().get_children()),
+            2,
+        )
         reload_button = next(
             child for child in detached.get_titlebar().get_children()
             if child.get_tooltip_text() == "Ricarica il tool corrente"
