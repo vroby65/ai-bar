@@ -690,6 +690,13 @@ CSS = """
   color: #ff6b6b;
 }
 
+button.status-button.clock-ssh {
+  min-height: 0;
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
 .section-title {
   color: #9ea7ac;
   font-size: 11px;
@@ -1003,12 +1010,12 @@ class AiBarWindow(Gtk.Window):
     def _build_clock(self) -> Gtk.Widget:
         wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=CLOCK_HORIZONTAL_SPACING)
-        self.clock_box.set_halign(Gtk.Align.CENTER)
+        self.clock_box.set_halign(Gtk.Align.START)
         self.time_label = Gtk.Label()
         self.date_label = Gtk.Label()
         self.time_label.get_style_context().add_class("clock-time")
         self.date_label.get_style_context().add_class("clock-date")
-        self.time_label.set_xalign(0.5)
+        self.time_label.set_xalign(0)
         self.date_label.set_xalign(0)
         self.public_ip_label = Gtk.Label(label="IP: —")
         self.public_ip_label.set_xalign(0)
@@ -1016,7 +1023,12 @@ class AiBarWindow(Gtk.Window):
         self.clock_details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
         self.clock_details.set_valign(Gtk.Align.CENTER)
         self.clock_details.pack_start(self.date_label, False, False, 0)
-        self.clock_details.pack_start(self.public_ip_label, False, False, 0)
+        self.network_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.network_row.pack_start(self.public_ip_label, False, False, 0)
+        ssh_button = SSHServerButton(self._show_error)
+        ssh_button.get_style_context().add_class("clock-ssh")
+        self.network_row.pack_start(ssh_button, False, False, 0)
+        self.clock_details.pack_start(self.network_row, False, False, 0)
         for button_config in self.config.get("session_buttons", []):
             if button_config.get("action") == "reload":
                 button = self._build_session_button(button_config, icon_only=True)
@@ -1089,7 +1101,6 @@ class AiBarWindow(Gtk.Window):
 
         system_status = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         system_status.pack_start(self._build_battery_status(), False, False, 0)
-        system_status.pack_start(SSHServerButton(self._show_error), False, False, 0)
         self._add_flow_child(status_flow, system_status)
 
         tray_flow = Gtk.FlowBox()

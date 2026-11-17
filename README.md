@@ -44,7 +44,8 @@ Tab keeps its usual behavior inside the active application, such as moving betwe
 controls or completing terminal commands. Shift+Tab is reserved for switching
 windows while AI-bar is running.
 
-The large time sits on the left, with the date above the public IP on the right.
+The header is left-aligned: reload, large time, then the date above the public IP.
+The SSH server button sits beside the IP.
 The IP is fetched from `https://api.ipify.org` in the background at startup and
 every minute. Its color reflects the HTTPS response time, including connection
 setup: green up to 200 ms, yellow up to 800 ms, red above 800 ms or on failure.
@@ -86,7 +87,7 @@ The default screenshot button immediately starts MATE Screenshot's area selector
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
 
 The status row includes a battery indicator with its percentage, charging state,
-and icon; it is hidden when no battery is detected. The SSH button beside it shows
+and icon; it is hidden when no battery is detected. The SSH button beside the public IP shows
 whether the local SSH service or socket is active. Click it to start or stop the
 server through the system authentication dialog. Stopping SSH also stops socket
 activation. Install `openssh-server` separately to use this control; the button is
