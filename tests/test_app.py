@@ -24,7 +24,6 @@ from ai_bar.app import (
     X11SuperToggle,
     application_ids_match,
     clean_window_title,
-    clock_labels_fit_inline,
     command_to_shell_line,
     configuration_assistant_command,
     find_window_by_xid,
@@ -980,10 +979,6 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIsInstance(children[1], Gtk.Label)
         button.destroy()
 
-    def test_clock_labels_fit_inline_when_width_allows_it(self):
-        self.assertTrue(clock_labels_fit_inline(120, 50, 60, 10))
-        self.assertFalse(clock_labels_fit_inline(119, 50, 60, 10))
-
     def test_terminal_argv_runs_commands_through_user_shell(self):
         with patch.dict(os.environ, {"SHELL": "/bin/bash"}):
             self.assertEqual(terminal_argv(["hermes"]), ["/bin/bash", "-lc", "hermes"])
@@ -1933,6 +1928,9 @@ class DetachTests(unittest.TestCase):
         window._detach_current_page()
 
         detached = window.detached["zsh"]
+        self.assertFalse(detached.get_titlebar().get_show_close_button())
+        self.assertEqual(sum(isinstance(child, Gtk.Button)
+                             for child in detached.get_titlebar().get_children()), 2)
         reload_button = next(
             child for child in detached.get_titlebar().get_children()
             if child.get_tooltip_text() == "Ricarica il tool corrente"

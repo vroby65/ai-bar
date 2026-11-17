@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -100,10 +101,6 @@ TERMINAL_PALETTE = (
     "#8be9fd",
     "#ffffff",
 )
-def clock_labels_fit_inline(available_width: int, time_width: int, date_width: int, spacing: int) -> bool:
-    return time_width + date_width + spacing <= available_width
-
-
 def panel_x_for_state(side: str, screen_x: int, screen_width: int, panel_width: int, hidden: bool) -> int:
     if side == "right":
         return screen_x + screen_width if hidden else screen_x + screen_width - panel_width
@@ -494,6 +491,59 @@ class RecordingAreaSelector(Gtk.Dialog):
         return True
 
 
+class X11WindowCycle:
+    def __init__(self, callback: Callable[[int], None]) -> None:
+        self.callback = callback
+        self.display: Any = None
+        self.watch_id: int | None = None
+        self.keycode = 0
+
+    def start(self) -> bool:
+        if X is None or XK is None or xlib_display is None:
+            return False
+        try:
+            self.display = xlib_display.Display()
+            self.keycode = self.display.keysym_to_keycode(XK.string_to_keysym("Tab"))
+            num_lock = self.display.keysym_to_keycode(XK.string_to_keysym("Num_Lock"))
+            num_mask = next(
+                (1 << index for index, codes in enumerate(self.display.get_modifier_mapping())
+                 if num_lock and num_lock in codes), 0,
+            )
+            errors = []
+            for locks in {0, X.LockMask, num_mask, X.LockMask | num_mask}:
+                self.display.screen().root.grab_key(
+                    self.keycode, X.ShiftMask | locks, False,
+                    X.GrabModeAsync, X.GrabModeAsync,
+                    onerror=lambda error, _request: errors.append(error),
+                )
+            self.display.sync()
+            if errors:
+                raise RuntimeError("Maiusc+Tab già assegnato da un'altra applicazione")
+            self.watch_id = GLib.io_add_watch(
+                self.display.fileno(), GLib.IO_IN, self._on_events,
+            )
+            return True
+        except Exception as exc:
+            print(f"ai-bar: cambio finestra Maiusc+Tab disattivato: {exc}", file=sys.stderr)
+            self.stop()
+            return False
+
+    def _on_events(self, _source: Any, _condition: Any) -> bool:
+        while self.display.pending_events():
+            event = self.display.next_event()
+            if event.type == X.KeyPress and event.detail == self.keycode:
+                self.callback(event.time)
+        return True
+
+    def stop(self) -> None:
+        if self.watch_id is not None:
+            GLib.source_remove(self.watch_id)
+            self.watch_id = None
+        if self.display is not None:
+            self.display.close()
+            self.display = None
+
+
 class X11SuperToggle:
     def __init__(self, callback: Callable[[], None]) -> None:
         self.callback = callback
@@ -626,6 +676,18 @@ CSS = """
 .clock-date {
   color: #aeb8bd;
   font-size: 13px;
+}
+
+.connection-fast {
+  color: #8bd450;
+}
+
+.connection-medium {
+  color: #f4bf75;
+}
+
+.connection-slow {
+  color: #ff6b6b;
 }
 
 .section-title {
@@ -828,6 +890,7 @@ class AiBarWindow(Gtk.Window):
         self.window_list_poll_id: int | None = None
         self.own_xid: int | None = None
         self.super_toggle: X11SuperToggle | None = None
+        self.window_cycle: X11WindowCycle | None = None
         self.panel_width = int(self.config["panel"]["width"])
         self.panel_hidden = False
         self.panel_animation_id: int | None = None
@@ -939,21 +1002,70 @@ class AiBarWindow(Gtk.Window):
 
     def _build_clock(self) -> Gtk.Widget:
         wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.clock_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
+        self.clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=CLOCK_HORIZONTAL_SPACING)
+        self.clock_box.set_halign(Gtk.Align.CENTER)
         self.time_label = Gtk.Label()
         self.date_label = Gtk.Label()
         self.time_label.get_style_context().add_class("clock-time")
         self.date_label.get_style_context().add_class("clock-date")
         self.time_label.set_xalign(0.5)
-        self.date_label.set_xalign(0.5)
+        self.date_label.set_xalign(0)
+        self.public_ip_label = Gtk.Label(label="IP: —")
+        self.public_ip_label.set_xalign(0)
+        self.public_ip_label.get_style_context().add_class("clock-date")
+        self.clock_details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
+        self.clock_details.set_valign(Gtk.Align.CENTER)
+        self.clock_details.pack_start(self.date_label, False, False, 0)
+        self.clock_details.pack_start(self.public_ip_label, False, False, 0)
+        for button_config in self.config.get("session_buttons", []):
+            if button_config.get("action") == "reload":
+                button = self._build_session_button(button_config, icon_only=True)
+                button.set_valign(Gtk.Align.CENTER)
+                self.clock_box.pack_start(button, False, False, 0)
         self.clock_box.pack_start(self.time_label, False, False, 0)
-        self.clock_box.pack_start(self.date_label, False, False, 0)
-        wrapper.pack_start(self.clock_box, False, False, 0)
-        wrapper.connect("size-allocate", self._on_clock_size_allocate)
+        self.clock_box.pack_start(self.clock_details, False, False, 0)
+        wrapper.add(self.clock_box)
 
         self._update_clock()
         GLib.timeout_add_seconds(1, self._update_clock)
+        self.public_ip_active = True
+        self._refresh_public_ip()
+        self.public_ip_timeout_id = GLib.timeout_add_seconds(60, self._refresh_public_ip)
+        wrapper.connect("destroy", self._stop_public_ip)
         return wrapper
+
+    def _refresh_public_ip(self) -> bool:
+        def fetch() -> None:
+            started = time.monotonic()
+            latency_ms = None
+            try:
+                with urllib.request.urlopen("https://api.ipify.org", timeout=5) as response:
+                    address = str(ipaddress.ip_address(response.read(128).decode("ascii").strip()))
+                latency_ms = (time.monotonic() - started) * 1000
+            except (OSError, ValueError):
+                address = "—"
+            GLib.idle_add(self._show_public_ip, address, latency_ms)
+
+        threading.Thread(target=fetch, daemon=True).start()
+        return True
+
+    def _show_public_ip(self, address: str, latency_ms: float | None) -> bool:
+        if self.public_ip_active:
+            self.public_ip_label.set_text(f"IP: {address}")
+            state = "slow" if latency_ms is None or latency_ms > 800 else (
+                "medium" if latency_ms > 200 else "fast")
+            style = self.public_ip_label.get_style_context()
+            for name in ("fast", "medium", "slow"):
+                style.remove_class(f"connection-{name}")
+            style.add_class(f"connection-{state}")
+            self.public_ip_label.set_tooltip_text(
+                "Connessione non disponibile" if latency_ms is None else
+                f"Risposta HTTPS: {latency_ms:.0f} ms (api.ipify.org)")
+        return False
+
+    def _stop_public_ip(self, _widget: Gtk.Widget) -> None:
+        self.public_ip_active = False
+        GLib.source_remove(self.public_ip_timeout_id)
 
     def _build_tray_row(self) -> Gtk.Widget:
         status_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -1532,11 +1644,15 @@ class AiBarWindow(Gtk.Window):
         row.set_homogeneous(True)
 
         for button_config in self.config.get("session_buttons", []):
+            if button_config.get("action") == "reload":
+                continue
             row.pack_start(self._build_session_button(button_config), True, True, 0)
 
         return row
 
-    def _build_session_button(self, button_config: dict[str, Any]) -> Gtk.Widget:
+    def _build_session_button(
+        self, button_config: dict[str, Any], icon_only: bool = False
+    ) -> Gtk.Widget:
         button = Gtk.Button()
         button.get_style_context().add_class("session-button")
         button.set_relief(Gtk.ReliefStyle.NONE)
@@ -1569,7 +1685,8 @@ class AiBarWindow(Gtk.Window):
         label = Gtk.Label(label=str(button_config.get("label", "")))
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_max_width_chars(9)
-        inner.pack_start(label, False, False, 0)
+        if not icon_only:
+            inner.pack_start(label, False, False, 0)
 
         button.add(inner)
         return button
@@ -1650,6 +1767,9 @@ class AiBarWindow(Gtk.Window):
         self._start_window_list()
         self.super_toggle = X11SuperToggle(self._toggle_panel_visibility)
         self.super_toggle.start()
+        if isinstance(gdk_window, GdkX11.X11Window) and self.wnck_screen is not None:
+            self.window_cycle = X11WindowCycle(self._cycle_window)
+            self.window_cycle.start()
         GLib.idle_add(self._focus_terminal)
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.start()
@@ -1691,6 +1811,8 @@ class AiBarWindow(Gtk.Window):
             self.window_list_poll_id = None
         if self.super_toggle is not None:
             self.super_toggle.stop()
+        if self.window_cycle is not None:
+            self.window_cycle.stop()
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.stop()
         if self.tray_host is not None:
@@ -1857,20 +1979,6 @@ class AiBarWindow(Gtk.Window):
         self.clock_box.queue_resize()
         return True
 
-    def _on_clock_size_allocate(self, _box: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
-        _time_min_width, time_width = self.time_label.get_preferred_width()
-        _date_min_width, date_width = self.date_label.get_preferred_width()
-        inline = clock_labels_fit_inline(
-            allocation.width,
-            time_width,
-            date_width,
-            CLOCK_HORIZONTAL_SPACING,
-        )
-
-        self.clock_box.set_orientation(Gtk.Orientation.HORIZONTAL if inline else Gtk.Orientation.VERTICAL)
-        self.clock_box.set_spacing(CLOCK_HORIZONTAL_SPACING if inline else CLOCK_VERTICAL_SPACING)
-        self.clock_box.set_halign(Gtk.Align.CENTER if inline else Gtk.Align.FILL)
-
     def _update_status_items(self) -> bool:
         for item, label in self.status_labels:
             item_type = item.get("type")
@@ -2011,6 +2119,43 @@ class AiBarWindow(Gtk.Window):
         self._rebuild_window_buttons(windows)
         self.window_list_signature = signature
         return True
+
+    def _cycle_window(self, timestamp: int) -> None:
+        if self.wnck_screen is None:
+            return
+        self.wnck_screen.force_update()
+        workspace = self.wnck_screen.get_active_workspace()
+        windows = [
+            window for window in self.wnck_screen.get_windows()
+            if window.get_xid() == self.own_xid or (
+                not window.is_skip_tasklist()
+                and (workspace is None or window.is_pinned() or window.is_on_workspace(workspace))
+            )
+        ]
+        if not windows:
+            return
+        active = self.wnck_screen.get_active_window()
+        index = next((i for i, window in enumerate(windows) if window == active), -1)
+        target = windows[(index + 1) % len(windows)]
+        if target.get_xid() != self.own_xid:
+            target.activate(timestamp)
+            return
+        if self.panel_hidden:
+            if self.panel_animation_id is not None:
+                GLib.source_remove(self.panel_animation_id)
+                self.panel_animation_id = None
+            self.panel_hidden = False
+            self._apply_panel_geometry()
+            self._apply_strut()
+        self.present_with_time(timestamp)
+        self.get_window().focus(timestamp)
+        notebook = self.terminal_notebook
+        if notebook is not None:
+            page = notebook.get_nth_page(notebook.get_current_page())
+            if page is not None:
+                page.grab_focus()
+                if isinstance(page, Gtk.Socket):
+                    GLib.idle_add(self._focus_embedded_window, page)
 
     def _activate_window(self, xid: int) -> None:
         if self.wnck_screen is None:
@@ -2540,7 +2685,7 @@ class AiBarWindow(Gtk.Window):
         window.connect("delete-event", self._on_detached_closed, key)
 
         header = Gtk.HeaderBar(title=title)
-        header.set_show_close_button(True)
+        header.set_show_close_button(False)
         reload_button = Gtk.Button()
         reload_button.set_tooltip_text("Ricarica il tool corrente")
         reload_icon = Gtk.Image.new_from_icon_name(

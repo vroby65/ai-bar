@@ -36,6 +36,21 @@ python3 -m ai_bar --config config.example.json
 
 The editable installation loads Python code directly from this checkout. After a code change, use the `Reload` button to test it without running the installer again.
 
+On X11, Shift+Tab activates the next window on the current desktop, including
+minimized windows and AI-bar itself. Returning to AI-bar restores keyboard focus
+to its current tool and reveals the panel if hidden. Repeated presses cycle
+through windows in a stable order.
+Tab keeps its usual behavior inside the active application, such as moving between
+controls or completing terminal commands. Shift+Tab is reserved for switching
+windows while AI-bar is running.
+
+The large time sits on the left, with the date above the public IP on the right.
+The IP is fetched from `https://api.ipify.org` in the background at startup and
+every minute. Its color reflects the HTTPS response time, including connection
+setup: green up to 200 ms, yellow up to 800 ms, red above 800 ms or on failure.
+Hover over the IP to see the measured time; `IP: —` indicates that the address is
+unavailable. This measures responsiveness rather than download bandwidth.
+
 ## Configuration
 
 The default file is `~/.config/ai-bar/config.json`. You can start with `config.example.json` and customize:
@@ -64,7 +79,7 @@ The default file is `~/.config/ai-bar/config.json`. You can start with `config.e
 - `quick_launchers[].integrated`: `true` embeds the GUI application in the panel; `false` (the default) opens it in its own window
 - `terminal.command`: shell or command to open in the embedded terminal
 - `webview.hardware_acceleration`: `never` (the default), `on-demand`, or `always` for web app tabs
-- `session_buttons`: bottom buttons for reload, logout, reboot, and powerdown
+- `session_buttons`: session commands; reload appears as an icon beside the time at the top, while logout, reboot, and powerdown appear at the bottom
 
 The default screenshot button immediately starts MATE Screenshot's area selector.
 
@@ -94,7 +109,7 @@ The AI tool launchers open a separate terminal tab for each command. Returning t
 
 AI Bar exports `SUDO_ASKPASS=/usr/local/bin/ai-bar-askpass` to its embedded terminals when the helper is installed. Agent and terminal commands can request the themed graphical password dialog with `sudo -A`; the helper never stores or logs the password. An existing `SUDO_ASKPASS` value is preserved.
 
-A tab can be detached into a window of its own with the button inside the top-right corner of the tool area, for when something started in the panel turns into real work. Nothing is restarted: the terminal keeps its process and the page keeps its state, typed text included. Pressing the detach button in the separate window puts the tab back in the panel; closing that window does the same rather than ending the tool. The reload button next to it restarts the current terminal or embedded GUI tool, or reloads the current web app. The panel falls back to the first tab that is left, or to an empty area if that was the only one, and while a tool is detached its launcher button is outlined and clicking it raises the window.
+A tab can be detached into a window of its own with the button inside the top-right corner of the tool area, for when something started in the panel turns into real work. Nothing is restarted: the terminal keeps its process and the page keeps its state, typed text included. The separate window's header shows only reload and return-to-panel buttons, without minimize, maximize, or close buttons. Pressing the return button puts the tab back in the panel; closing that window with a window-manager shortcut does the same rather than ending the tool. The reload button next to it restarts the current terminal or embedded GUI tool, or reloads the current web app. The panel falls back to the first tab that is left, or to an empty area if that was the only one, and while a tool is detached its launcher button is outlined and clicking it raises the window.
 
 No replacement tab is created to fill the gap. Tab labels are hidden, so a tab that no launcher button owns could never be reached again and its process would keep running out of sight. Embedded GUI windows are the one thing that cannot be detached: they have a window of their own already, and detaching one would mean dismantling the embedding.
 
