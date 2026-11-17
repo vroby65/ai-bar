@@ -1372,7 +1372,7 @@ class AiBarWindow(Gtk.Window):
         self.clock_details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
         self.clock_details.set_valign(Gtk.Align.CENTER)
         self.clock_details.pack_start(self.date_label, False, False, 0)
-        self.network_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.network_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         self.network_row.pack_start(self.public_ip_label, False, False, 0)
         ssh_button = SSHServerButton(self._show_error)
         add_accent_color(ssh_button, 0)
