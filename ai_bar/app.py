@@ -1366,6 +1366,11 @@ class AiBarWindow(Gtk.Window):
         self.clock_details.set_valign(Gtk.Align.CENTER)
         self.clock_details.pack_start(self.date_label, False, False, 0)
         self.clock_details.pack_start(self.public_ip_label, False, False, 0)
+        for button_config in self.config.get("session_buttons", []):
+            if button_config.get("action") == "reload":
+                button = self._build_session_button(button_config, icon_only=True)
+                button.set_valign(Gtk.Align.CENTER)
+                self.clock_box.pack_start(button, False, False, 0)
         self.clock_box.pack_start(self.time_label, False, False, 0)
         self.clock_box.pack_start(self.clock_details, False, False, 0)
         wrapper.add(self.clock_box)
@@ -1426,10 +1431,6 @@ class AiBarWindow(Gtk.Window):
         status_flow = NaturalWrapBox(spacing=6)
         status_flow.get_style_context().add_class("status-flow")
         status_flow.set_direction(Gtk.TextDirection.LTR)
-
-        for button_config in self.config.get("session_buttons", []):
-            if button_config.get("action") == "reload":
-                status_flow.add(self._build_session_button(button_config, icon_only=True))
 
         for item in self.config.get("tray", {}).get("items", []):
             if item.get("type") == "screenshot":
