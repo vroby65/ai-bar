@@ -88,9 +88,12 @@ behavior; to return to the buttons, hide and reopen the panel with Super.
 
 By default, left-click the date or time at the top of the panel to open Google Calendar in Google Chrome (`google-chrome`). Set `clock.command` to change this action or disable it with `null`.
 
-The public IP address appears to the left of the time. It is fetched from
-`https://api.ipify.org` in the background at startup and every minute; `IP: —`
-indicates that the address is unavailable.
+The large time sits on the left, with the date above the public IP on the right.
+The IP is fetched from `https://api.ipify.org` in the background at startup and
+every minute. Its color reflects the HTTPS response time, including connection
+setup: green up to 200 ms, yellow up to 800 ms, red above 800 ms or on failure.
+Hover over the IP to see the measured time; `IP: —` indicates that the address is
+unavailable. This measures responsiveness rather than download bandwidth.
 
 ## Configuration
 

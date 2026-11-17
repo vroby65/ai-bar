@@ -30,7 +30,6 @@ from ai_bar.app import (
     X11SuperToggle,
     application_ids_match,
     clean_window_title,
-    clock_labels_fit_inline,
     command_to_shell_line,
     configuration_assistant_command,
     recording_audio_sources,
@@ -484,18 +483,22 @@ class ClockLayoutTests(unittest.TestCase):
 
     @patch("ai_bar.app.GLib.timeout_add_seconds", return_value=42)
     @patch("ai_bar.app.GLib.source_remove")
-    def test_public_ip_precedes_time_and_stops_on_destroy(self, remove, timeout):
+    def test_time_beside_stacked_date_and_ip_and_stops_on_destroy(self, remove, timeout):
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = default_config()
         clock = window._build_clock()
-        self.assertEqual(window.time_row.get_children(),
-                         [window.public_ip_label, window.time_label])
+        self.assertEqual(window.clock_details.get_children(),
+                         [window.date_label, window.public_ip_label])
+        self.assertEqual(window.clock_box.get_children(),
+                         [window.time_label, window.clock_details])
+        self.assertEqual(window.clock_box.get_orientation(), Gtk.Orientation.HORIZONTAL)
+        self.assertEqual(window.clock_details.get_orientation(), Gtk.Orientation.VERTICAL)
         self.assertEqual(window.public_ip_label.get_xalign(), 0)
         self.assertEqual(window.public_ip_label.get_text(), "IP: —")
         timeout.assert_any_call(60, window._refresh_public_ip)
         clock.destroy()
         remove.assert_called_once_with(42)
-        self.assertFalse(window._show_public_ip("203.0.113.7"))
+        self.assertFalse(window._show_public_ip("203.0.113.7", 125))
         self.assertEqual(window.public_ip_label.get_text(), "IP: —")
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
@@ -510,10 +513,11 @@ class ClockLayoutTests(unittest.TestCase):
         urlopen.assert_not_called()
         response = urlopen.return_value.__enter__.return_value
         response.read.return_value = b"203.0.113.7\n"
-        fetch()
+        with patch("ai_bar.app.time.monotonic", side_effect=[10, 10.125]):
+            fetch()
         urlopen.assert_called_once_with("https://api.ipify.org", timeout=5)
-        idle.assert_called_once_with(window._show_public_ip, "203.0.113.7")
-        self.assertFalse(window._show_public_ip("203.0.113.7"))
+        idle.assert_called_once_with(window._show_public_ip, "203.0.113.7", 125)
+        self.assertFalse(window._show_public_ip("203.0.113.7", 125))
         self.assertEqual(window.public_ip_label.get_text(), "IP: 203.0.113.7")
         for result in (b"invalid", OSError("offline")):
             with self.subTest(result=result):
@@ -523,7 +527,24 @@ class ClockLayoutTests(unittest.TestCase):
                 else:
                     response.read.return_value = result
                 fetch()
-                idle.assert_called_once_with(window._show_public_ip, "—")
+                idle.assert_called_once_with(window._show_public_ip, "—", None)
+
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    def test_public_ip_color_tracks_latency_and_clears_previous_state(self, _timeout):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = default_config()
+        clock = window._build_clock()
+        self.addCleanup(clock.destroy)
+        for latency, expected in ((50, "fast"), (200, "fast"),
+                                  (201, "medium"), (800, "medium"),
+                                  (801, "slow"), (None, "slow"), (100, "fast")):
+            with self.subTest(latency=latency):
+                window._show_public_ip("—" if latency is None else "203.0.113.7", latency)
+                style = window.public_ip_label.get_style_context()
+                for state in ("fast", "medium", "slow"):
+                    self.assertEqual(style.has_class(f"connection-{state}"), state == expected)
+                tooltip = window.public_ip_label.get_tooltip_text()
+                self.assertIn("non disponibile" if latency is None else f"{latency:.0f} ms", tooltip)
 
     @unittest.skipIf(X is None, "python-xlib not available")
     def test_focus_returns_false_for_a_destroyed_x11_window(self):
@@ -1998,10 +2019,6 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertIsInstance(children[0], Gtk.Image)
         self.assertIsInstance(children[1], Gtk.Label)
         button.destroy()
-
-    def test_clock_labels_fit_inline_when_width_allows_it(self):
-        self.assertTrue(clock_labels_fit_inline(120, 50, 60, 10))
-        self.assertFalse(clock_labels_fit_inline(119, 50, 60, 10))
 
     def test_terminal_argv_runs_commands_through_user_shell(self):
         with patch.dict(os.environ, {"SHELL": "/bin/bash"}):

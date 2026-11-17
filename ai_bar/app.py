@@ -102,10 +102,6 @@ TERMINAL_PALETTE = (
     "#8be9fd",
     "#ffffff",
 )
-def clock_labels_fit_inline(available_width: int, time_width: int, date_width: int, spacing: int) -> bool:
-    return time_width + date_width + spacing <= available_width
-
-
 def panel_x_for_state(side: str, screen_x: int, screen_width: int, panel_width: int, hidden: bool) -> int:
     if side == "right":
         return screen_x + screen_width if hidden else screen_x + screen_width - panel_width
@@ -940,6 +936,18 @@ CSS = """
   font-size: 13px;
 }
 
+.connection-fast {
+  color: #8bd450;
+}
+
+.connection-medium {
+  color: #f4bf75;
+}
+
+.connection-slow {
+  color: #ff6b6b;
+}
+
 .section-title {
   color: #9ea7ac;
   font-size: 11px;
@@ -1343,24 +1351,25 @@ class AiBarWindow(Gtk.Window):
         wrapper = Gtk.EventBox()
         wrapper.set_visible_window(False)
         wrapper.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-        self.clock_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
+        self.clock_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=CLOCK_HORIZONTAL_SPACING)
+        self.clock_box.set_halign(Gtk.Align.CENTER)
         self.time_label = Gtk.Label()
         self.date_label = Gtk.Label()
         self.time_label.get_style_context().add_class("clock-time")
         self.date_label.get_style_context().add_class("clock-date")
         self.time_label.set_xalign(0.5)
-        self.date_label.set_xalign(0.5)
+        self.date_label.set_xalign(0)
         self.public_ip_label = Gtk.Label(label="IP: —")
         self.public_ip_label.set_xalign(0)
         self.public_ip_label.get_style_context().add_class("clock-date")
-        self.time_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=CLOCK_HORIZONTAL_SPACING)
-        self.time_row.pack_start(self.public_ip_label, False, False, 0)
-        self.time_row.pack_start(self.time_label, True, True, 0)
-        self.clock_box.pack_start(self.time_row, False, False, 0)
-        self.clock_box.pack_start(self.date_label, False, False, 0)
+        self.clock_details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
+        self.clock_details.set_valign(Gtk.Align.CENTER)
+        self.clock_details.pack_start(self.date_label, False, False, 0)
+        self.clock_details.pack_start(self.public_ip_label, False, False, 0)
+        self.clock_box.pack_start(self.time_label, False, False, 0)
+        self.clock_box.pack_start(self.clock_details, False, False, 0)
         wrapper.add(self.clock_box)
         wrapper.connect("button-press-event", self._on_clock_button_press)
-        wrapper.connect("size-allocate", self._on_clock_size_allocate)
 
         self._update_clock()
         GLib.timeout_add_seconds(1, self._update_clock)
@@ -1372,19 +1381,31 @@ class AiBarWindow(Gtk.Window):
 
     def _refresh_public_ip(self) -> bool:
         def fetch() -> None:
+            started = time.monotonic()
+            latency_ms = None
             try:
                 with urllib.request.urlopen("https://api.ipify.org", timeout=5) as response:
                     address = str(ipaddress.ip_address(response.read(128).decode("ascii").strip()))
+                latency_ms = (time.monotonic() - started) * 1000
             except (OSError, ValueError):
                 address = "—"
-            GLib.idle_add(self._show_public_ip, address)
+            GLib.idle_add(self._show_public_ip, address, latency_ms)
 
         threading.Thread(target=fetch, daemon=True).start()
         return True
 
-    def _show_public_ip(self, address: str) -> bool:
+    def _show_public_ip(self, address: str, latency_ms: float | None) -> bool:
         if self.public_ip_active:
             self.public_ip_label.set_text(f"IP: {address}")
+            state = "slow" if latency_ms is None or latency_ms > 800 else (
+                "medium" if latency_ms > 200 else "fast")
+            style = self.public_ip_label.get_style_context()
+            for name in ("fast", "medium", "slow"):
+                style.remove_class(f"connection-{name}")
+            style.add_class(f"connection-{state}")
+            self.public_ip_label.set_tooltip_text(
+                "Connessione non disponibile" if latency_ms is None else
+                f"Risposta HTTPS: {latency_ms:.0f} ms (api.ipify.org)")
         return False
 
     def _stop_public_ip(self, _widget: Gtk.Widget) -> None:
@@ -2539,20 +2560,6 @@ class AiBarWindow(Gtk.Window):
         self.date_label.set_text(now.strftime(str(clock.get("date_format", "%A %d %B %Y"))))
         self.clock_box.queue_resize()
         return True
-
-    def _on_clock_size_allocate(self, _box: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
-        _time_min_width, time_width = self.time_row.get_preferred_width()
-        _date_min_width, date_width = self.date_label.get_preferred_width()
-        inline = clock_labels_fit_inline(
-            allocation.width,
-            time_width,
-            date_width,
-            CLOCK_HORIZONTAL_SPACING,
-        )
-
-        self.clock_box.set_orientation(Gtk.Orientation.HORIZONTAL if inline else Gtk.Orientation.VERTICAL)
-        self.clock_box.set_spacing(CLOCK_HORIZONTAL_SPACING if inline else CLOCK_VERTICAL_SPACING)
-        self.clock_box.set_halign(Gtk.Align.CENTER if inline else Gtk.Align.FILL)
 
     def _update_status_items(self) -> bool:
         for item, label in self.status_labels:
