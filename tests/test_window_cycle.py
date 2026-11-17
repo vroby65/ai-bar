@@ -2,13 +2,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from ai_bar.app import AiBarWindow, GdkX11, X, X11WindowCycle
+from ai_bar.app import AiBarWindow, GdkX11, Gtk, X, X11WindowCycle
 
 
 class WindowCycleTests(unittest.TestCase):
     def test_cycles_in_stable_order_including_minimized_windows(self):
         windows = []
-        for xid in (10, 20, 30, 99, 40, 50):
+        for xid in (10, 20, 30, 40, 50):
             window = Mock()
             window.get_xid.return_value = xid
             window.is_skip_tasklist.return_value = xid == 40
@@ -116,3 +116,61 @@ class WindowCycleTests(unittest.TestCase):
         )
         AiBarWindow._on_destroy(window, None)
         window.window_cycle.stop.assert_called_once_with()
+
+    def test_cycle_returns_to_panel_even_though_it_skips_tasklist(self):
+        panel, external = Mock(), Mock()
+        for window, xid in ((panel, 99), (external, 10)):
+            window.get_xid.return_value = xid
+            window.is_skip_tasklist.return_value = window is panel
+            window.is_on_workspace.return_value = True
+        screen = Mock()
+        screen.get_windows.return_value = [panel, external]
+        screen.get_active_window.return_value = external
+        host = Gtk.Window()
+        self.addCleanup(host.destroy)
+        page = Gtk.Entry()
+        notebook = Gtk.Notebook()
+        notebook.append_page(page, Gtk.Label(label="Conversation"))
+        host.add(notebook)
+        host.show_all()
+        host.set_focus(None)
+        self.assertIsNone(host.get_focus())
+        controller = SimpleNamespace(
+            wnck_screen=screen, own_xid=99, panel_hidden=False,
+            terminal_notebook=notebook, present_with_time=Mock(),
+            get_window=Mock(return_value=Mock()),
+        )
+        AiBarWindow._cycle_window(controller, 123)
+        controller.present_with_time.assert_called_once_with(123)
+        controller.get_window.return_value.focus.assert_called_once_with(123)
+        self.assertIs(host.get_focus(), page)
+        external.activate.assert_not_called()
+        screen.get_active_window.return_value = panel
+        AiBarWindow._cycle_window(controller, 124)
+        external.activate.assert_called_once_with(124)
+
+    @patch('ai_bar.app.GLib.idle_add')
+    @patch('ai_bar.app.GLib.source_remove')
+    def test_hidden_panel_is_shown_and_embedded_content_recovers_focus(self, remove, idle):
+        panel = Mock()
+        panel.get_xid.return_value = 99
+        panel.is_skip_tasklist.return_value = True
+        screen = Mock()
+        screen.get_windows.return_value = [panel]
+        screen.get_active_window.return_value = None
+        socket = Gtk.Socket()
+        notebook = Mock()
+        notebook.get_nth_page.return_value = socket
+        controller = SimpleNamespace(
+            wnck_screen=screen, own_xid=99, panel_hidden=True, panel_animation_id=42,
+            terminal_notebook=notebook, present_with_time=Mock(),
+            get_window=Mock(return_value=Mock()), _apply_panel_geometry=Mock(),
+            _apply_strut=Mock(), _focus_embedded_window=Mock(),
+        )
+        AiBarWindow._cycle_window(controller, 123)
+        self.assertFalse(controller.panel_hidden)
+        self.assertIsNone(controller.panel_animation_id)
+        remove.assert_called_once_with(42)
+        controller._apply_panel_geometry.assert_called_once_with()
+        controller._apply_strut.assert_called_once_with()
+        idle.assert_called_once_with(controller._focus_embedded_window, socket)

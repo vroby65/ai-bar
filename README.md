@@ -73,7 +73,9 @@ python3 -m ai_bar --config config.example.json
 The editable installation loads Python code directly from this checkout. After a code change, use the `Reload` button to test it without running the installer again.
 
 On X11, Shift+Tab activates the next window on the current desktop, including
-minimized windows. Repeated presses cycle through windows in a stable order.
+minimized windows and AI-bar itself. Returning to AI-bar restores keyboard focus
+to its current tool and reveals the panel if hidden. Repeated presses cycle
+through windows in a stable order.
 Tab keeps its usual behavior inside the active application, such as moving between
 controls or completing terminal commands. Shift+Tab is reserved for switching
 windows while AI-bar is running.

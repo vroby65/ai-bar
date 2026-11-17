@@ -2705,14 +2705,35 @@ class AiBarWindow(Gtk.Window):
         workspace = self.wnck_screen.get_active_workspace()
         windows = [
             window for window in self.wnck_screen.get_windows()
-            if window.get_xid() != self.own_xid and not window.is_skip_tasklist()
-            and (workspace is None or window.is_pinned() or window.is_on_workspace(workspace))
+            if window.get_xid() == self.own_xid or (
+                not window.is_skip_tasklist()
+                and (workspace is None or window.is_pinned() or window.is_on_workspace(workspace))
+            )
         ]
         if not windows:
             return
         active = self.wnck_screen.get_active_window()
         index = next((i for i, window in enumerate(windows) if window == active), -1)
-        windows[(index + 1) % len(windows)].activate(timestamp)
+        target = windows[(index + 1) % len(windows)]
+        if target.get_xid() != self.own_xid:
+            target.activate(timestamp)
+            return
+        if self.panel_hidden:
+            if self.panel_animation_id is not None:
+                GLib.source_remove(self.panel_animation_id)
+                self.panel_animation_id = None
+            self.panel_hidden = False
+            self._apply_panel_geometry()
+            self._apply_strut()
+        self.present_with_time(timestamp)
+        self.get_window().focus(timestamp)
+        notebook = self.terminal_notebook
+        if notebook is not None:
+            page = notebook.get_nth_page(notebook.get_current_page())
+            if page is not None:
+                page.grab_focus()
+                if isinstance(page, Gtk.Socket):
+                    GLib.idle_add(self._focus_embedded_window, page)
 
     def _activate_window(self, xid: int) -> None:
         if self.wnck_screen is None:
