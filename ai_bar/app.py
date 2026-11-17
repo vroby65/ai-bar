@@ -3239,9 +3239,11 @@ class AiBarWindow(Gtk.Window):
         detach_button.get_style_context().add_class("detach-button")
         detach_button.get_style_context().add_class("page-action-button")
         detach_button.set_relief(Gtk.ReliefStyle.NONE)
-        detach_button.set_tooltip_text("Stacca in una finestra sul monitor principale")
-        detach_icon = Gtk.Image.new_from_icon_name(
-            "window-new-symbolic", Gtk.IconSize.MENU)
+        detach_button.set_tooltip_text("Porta il tool sul desktop")
+        detach_icon = Gtk.Image.new_from_gicon(
+            Gio.FileIcon.new(Gio.File.new_for_path(
+                str(Path(__file__).parent / "icons" / "tool-to-desktop-symbolic.svg"))),
+            Gtk.IconSize.MENU)
         detach_icon.set_pixel_size(PAGE_ACTION_ICON_SIZE)
         detach_button.add(detach_icon)
         detach_button.connect("clicked", lambda _button: self._detach_current_page())
@@ -3330,9 +3332,11 @@ class AiBarWindow(Gtk.Window):
             "clicked", lambda _button: self._reload_page(window.get_child()))
         reattach_button = Gtk.Button()
         reattach_button.get_style_context().add_class("page-action-button")
-        reattach_button.set_tooltip_text("Riattacca al pannello")
-        reattach_icon = Gtk.Image.new_from_icon_name(
-            "window-new-symbolic", Gtk.IconSize.MENU)
+        reattach_button.set_tooltip_text("Riporta il tool in AI-bar")
+        reattach_icon = Gtk.Image.new_from_gicon(
+            Gio.FileIcon.new(Gio.File.new_for_path(
+                str(Path(__file__).parent / "icons" / "tool-to-bar-symbolic.svg"))),
+            Gtk.IconSize.MENU)
         reattach_icon.set_pixel_size(PAGE_ACTION_ICON_SIZE)
         reattach_button.add(reattach_icon)
         reattach_button.connect(

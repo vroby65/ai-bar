@@ -3100,7 +3100,7 @@ class DetachTests(unittest.TestCase):
         detach_button = next(
             child for child in bar.get_children()
             if child.get_tooltip_text()
-            == "Stacca in una finestra sul monitor principale"
+            == "Porta il tool sul desktop"
         )
         self.assertTrue(
             reload_button.get_style_context().has_class("page-action-button")
@@ -3108,6 +3108,10 @@ class DetachTests(unittest.TestCase):
         self.assertTrue(
             detach_button.get_style_context().has_class("page-action-button")
         )
+        icon = detach_button.get_child().get_gicon()[0]
+        self.assertEqual(icon.get_file().get_basename(), "tool-to-desktop-symbolic.svg")
+        loaded = Gtk.IconTheme.get_default().lookup_by_gicon(icon, 16, 0).load_icon()
+        self.assertEqual((loaded.get_width(), loaded.get_height()), (16, 16))
         reload_button.emit("clicked")
 
         window._reload_current_page.assert_called_once_with()
@@ -3274,7 +3278,7 @@ class DetachTests(unittest.TestCase):
         )
         reattach_button = next(
             child for child in detached.get_titlebar().get_children()
-            if child.get_tooltip_text() == "Riattacca al pannello"
+            if child.get_tooltip_text() == "Riporta il tool in AI-bar"
         )
         self.assertTrue(
             reload_button.get_style_context().has_class("page-action-button")
@@ -3287,6 +3291,10 @@ class DetachTests(unittest.TestCase):
             reload_button.get_child().get_pixel_size(),
             reattach_button.get_child().get_pixel_size(),
         )
+        icon = reattach_button.get_child().get_gicon()[0]
+        self.assertEqual(icon.get_file().get_basename(), "tool-to-bar-symbolic.svg")
+        loaded = Gtk.IconTheme.get_default().lookup_by_gicon(icon, 16, 0).load_icon()
+        self.assertEqual((loaded.get_width(), loaded.get_height()), (16, 16))
         reload_button.emit("clicked")
         reattach_button.emit("clicked")
 

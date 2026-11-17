@@ -14,5 +14,8 @@ ai-bar = "ai_bar.app:main"
 [tool.setuptools]
 packages = ["ai_bar"]
 
+[tool.setuptools.package-data]
+ai_bar = ["icons/*.svg"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
