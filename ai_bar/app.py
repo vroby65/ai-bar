@@ -589,6 +589,59 @@ class RecordingAreaSelector(Gtk.Dialog):
         return True
 
 
+class X11WindowCycle:
+    def __init__(self, callback: Callable[[int], None]) -> None:
+        self.callback = callback
+        self.display: Any = None
+        self.watch_id: int | None = None
+        self.keycode = 0
+
+    def start(self) -> bool:
+        if X is None or XK is None or xlib_display is None:
+            return False
+        try:
+            self.display = xlib_display.Display()
+            self.keycode = self.display.keysym_to_keycode(XK.string_to_keysym("Tab"))
+            num_lock = self.display.keysym_to_keycode(XK.string_to_keysym("Num_Lock"))
+            num_mask = next(
+                (1 << index for index, codes in enumerate(self.display.get_modifier_mapping())
+                 if num_lock and num_lock in codes), 0,
+            )
+            errors = []
+            for locks in {0, X.LockMask, num_mask, X.LockMask | num_mask}:
+                self.display.screen().root.grab_key(
+                    self.keycode, X.ShiftMask | locks, False,
+                    X.GrabModeAsync, X.GrabModeAsync,
+                    onerror=lambda error, _request: errors.append(error),
+                )
+            self.display.sync()
+            if errors:
+                raise RuntimeError("Maiusc+Tab già assegnato da un'altra applicazione")
+            self.watch_id = GLib.io_add_watch(
+                self.display.fileno(), GLib.IO_IN, self._on_events,
+            )
+            return True
+        except Exception as exc:
+            print(f"ai-bar: cambio finestra Maiusc+Tab disattivato: {exc}", file=sys.stderr)
+            self.stop()
+            return False
+
+    def _on_events(self, _source: Any, _condition: Any) -> bool:
+        while self.display.pending_events():
+            event = self.display.next_event()
+            if event.type == X.KeyPress and event.detail == self.keycode:
+                self.callback(event.time)
+        return True
+
+    def stop(self) -> None:
+        if self.watch_id is not None:
+            GLib.source_remove(self.watch_id)
+            self.watch_id = None
+        if self.display is not None:
+            self.display.close()
+            self.display = None
+
+
 class X11SuperToggle:
     def __init__(
         self, callback: Callable[[], None], powerdown_callback: Callable[[], None],
@@ -1166,6 +1219,7 @@ class AiBarWindow(Gtk.Window):
         self.window_list_poll_id: int | None = None
         self.own_xid: int | None = None
         self.super_toggle: X11SuperToggle | None = None
+        self.window_cycle: X11WindowCycle | None = None
         self.panel_width = int(self.config["panel"]["width"])
         self.panel_hidden = False
         self.panel_animation_id: int | None = None
@@ -2209,6 +2263,9 @@ class AiBarWindow(Gtk.Window):
             self._focus_clicked_embedded_window,
         )
         self.super_toggle.start()
+        if isinstance(gdk_window, GdkX11.X11Window) and self.wnck_screen is not None:
+            self.window_cycle = X11WindowCycle(self._cycle_window)
+            self.window_cycle.start()
         GLib.idle_add(self._focus_terminal)
         GLib.idle_add(self._restore_native_windows_after_reload)
         if self.xapp_tray_host is not None:
@@ -2251,6 +2308,8 @@ class AiBarWindow(Gtk.Window):
             self.window_list_poll_id = None
         if self.super_toggle is not None:
             self.super_toggle.stop()
+        if self.window_cycle is not None:
+            self.window_cycle.stop()
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.stop()
         if self.tray_host is not None:
@@ -2638,6 +2697,22 @@ class AiBarWindow(Gtk.Window):
         self._rebuild_window_buttons(windows)
         self.window_list_signature = signature
         return True
+
+    def _cycle_window(self, timestamp: int) -> None:
+        if self.wnck_screen is None:
+            return
+        self.wnck_screen.force_update()
+        workspace = self.wnck_screen.get_active_workspace()
+        windows = [
+            window for window in self.wnck_screen.get_windows()
+            if window.get_xid() != self.own_xid and not window.is_skip_tasklist()
+            and (workspace is None or window.is_pinned() or window.is_on_workspace(workspace))
+        ]
+        if not windows:
+            return
+        active = self.wnck_screen.get_active_window()
+        index = next((i for i, window in enumerate(windows) if window == active), -1)
+        windows[(index + 1) % len(windows)].activate(timestamp)
 
     def _activate_window(self, xid: int) -> None:
         if self.wnck_screen is None:

@@ -356,7 +356,7 @@ class ScreenRecordingTests(unittest.TestCase):
             _stop_screen_recording=Mock(), xapp_tray_host=None, tray_host=None,
             embedded_window_xids={},
             volume_update_timeout_id=None, panel_animation_id=None,
-            window_list_poll_id=None, super_toggle=None)
+            window_list_poll_id=None, super_toggle=None, window_cycle=None)
         AiBarWindow._reload(window)
         window._stop_screen_recording.assert_called_once_with(wait=True)
         execvp.assert_called_once()
