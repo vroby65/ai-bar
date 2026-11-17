@@ -88,7 +88,8 @@ behavior; to return to the buttons, hide and reopen the panel with Super.
 
 By default, left-click the date or time at the top of the panel to open Google Calendar in Google Chrome (`google-chrome`). Set `clock.command` to change this action or disable it with `null`.
 
-The large time sits on the left, with the date above the public IP on the right.
+The header is left-aligned: reload, large time, then the date above the public IP.
+The SSH server button sits beside the IP.
 The IP is fetched from `https://api.ipify.org` in the background at startup and
 every minute. Its color reflects the HTTPS response time, including connection
 setup: green up to 200 ms, yellow up to 800 ms, red above 800 ms or on failure.
@@ -142,7 +143,7 @@ The default display button opens MATE's display settings (`mate-display-properti
 The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
 
 The tools are ordered left to right: screenshot, recording, and window tiling.
-The SSH server control appears in the status row above, next to the battery.
+The SSH server control appears in the header, beside the public IP.
 The SSH button turns green while the server or its activation socket is active.
 Click it to start or stop SSH, authorizing through the system password dialog.
 Stopping also stops `ssh.socket`, so incoming connections cannot restart the

@@ -488,7 +488,7 @@ class ClockLayoutTests(unittest.TestCase):
         window.config = default_config()
         clock = window._build_clock()
         self.assertEqual(window.clock_details.get_children(),
-                         [window.date_label, window.public_ip_label])
+                         [window.date_label, window.network_row])
         self.assertEqual(window.clock_box.get_children()[1:],
                          [window.time_label, window.clock_details])
         self.assertEqual(window.clock_box.get_orientation(), Gtk.Orientation.HORIZONTAL)
@@ -497,9 +497,27 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(window.public_ip_label.get_text(), "IP: —")
         timeout.assert_any_call(60, window._refresh_public_ip)
         clock.destroy()
-        remove.assert_called_once_with(42)
+        self.assertEqual(remove.call_args_list, [unittest.mock.call(42), unittest.mock.call(42)])
         self.assertFalse(window._show_public_ip("203.0.113.7", 125))
         self.assertEqual(window.public_ip_label.get_text(), "IP: —")
+
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    @patch("ai_bar.ssh_server.SSHServerButton._start_work")
+    def test_header_is_left_aligned_and_ssh_is_beside_ip(self, start_work, _timeout):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = default_config()
+        clock = window._build_clock()
+        self.addCleanup(clock.destroy)
+        self.assertEqual(window.clock_box.get_halign(), Gtk.Align.START)
+        self.assertEqual(window.time_label.get_xalign(), 0)
+        ip, ssh = window.network_row.get_children()
+        self.assertIs(ip, window.public_ip_label)
+        self.assertTrue(ssh.get_style_context().has_class("clock-ssh"))
+        self.assertEqual(ssh.get_child().get_children()[1].get_text(), "SSH")
+        ssh._units = ("ssh.service",)
+        start_work.reset_mock()
+        ssh.emit("clicked")
+        start_work.assert_called_once_with(True)
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     def test_panel_reload_is_beside_time_and_keeps_its_action(self, _timeout):
@@ -841,17 +859,11 @@ class ClockLayoutTests(unittest.TestCase):
 
         status_flow = status_area.get_children()[0]
         volume_control, display_button, system_status = status_flow.get_children()
-        battery_button, ssh_button = system_status.get_children()
+        battery_button, = system_status.get_children()
         self.assertEqual(system_status.get_orientation(), Gtk.Orientation.HORIZONTAL)
-        self.assertTrue(ssh_button.get_style_context().has_class("status-button"))
-        self.assertTrue(ssh_button.get_style_context().has_class("accent-blue"))
-        self.assertFalse(ssh_button.get_style_context().has_class("tray-icon-cell"))
         tray_row = status_area.get_children()[1]
         tray_flow, tools = tray_row.get_children()
         screenshot_button, record_button, spiral_button = tools.get_children()
-        ssh_icon, ssh_label = ssh_button.get_child().get_children()
-        self.assertEqual(ssh_icon.get_icon_name()[0], "network-server-symbolic")
-        self.assertEqual(ssh_label.get_text(), "SSH")
         self.assertEqual(record_button.get_tooltip_text(), "Registra lo schermo")
         self.assertTrue(screenshot_button.get_style_context().has_class("tray-icon-cell"))
         self.assertIsInstance(volume_control, Gtk.Box)
