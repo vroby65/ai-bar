@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import gi
 
@@ -520,7 +520,7 @@ class ClockLayoutTests(unittest.TestCase):
         start_work.assert_called_once_with(True)
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
-    def test_clicking_public_ip_opens_librespeed_only_on_left_click(self, _timeout):
+    def test_public_ip_opens_librespeed_on_left_click_and_router_on_right_click(self, _timeout):
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = default_config()
         window._launch = Mock()
@@ -529,8 +529,11 @@ class ClockLayoutTests(unittest.TestCase):
         for number in (2, 3, 1):
             event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
             event.button = number
-            self.assertEqual(window.public_ip_link.emit("button-press-event", event), number == 1)
-        window._launch.assert_called_once_with(["xdg-open", "https://librespeed.org/"])
+            self.assertEqual(window.public_ip_link.emit("button-press-event", event), number in (1, 3))
+        self.assertEqual(window._launch.call_args_list, [
+            call(["xdg-open", "http://192.168.178.1/"]),
+            call(["xdg-open", "https://librespeed.org/"]),
+        ])
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     def test_panel_reload_is_beside_time_and_keeps_its_action(self, _timeout):

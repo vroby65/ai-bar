@@ -1376,7 +1376,7 @@ class AiBarWindow(Gtk.Window):
         self.public_ip_link = Gtk.EventBox()
         self.public_ip_link.set_visible_window(False)
         self.public_ip_link.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-        self.public_ip_link.set_tooltip_text("Apri LibreSpeed nel browser")
+        self.public_ip_link.set_tooltip_text("Sinistro: LibreSpeed · Destro: modem")
         self.public_ip_link.add(self.public_ip_label)
         self.public_ip_link.connect("button-press-event", self._on_public_ip_button_press)
         self.network_row.pack_start(self.public_ip_link, False, False, 0)
@@ -1404,9 +1404,13 @@ class AiBarWindow(Gtk.Window):
         return wrapper
 
     def _on_public_ip_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
-        if event.button != 1:
+        if event.button == 1:
+            url = "https://librespeed.org/"
+        elif event.button == 3:
+            url = "http://192.168.178.1/"
+        else:
             return False
-        self._launch(["xdg-open", "https://librespeed.org/"])
+        self._launch(["xdg-open", url])
         return True
 
     def _refresh_public_ip(self) -> bool:
