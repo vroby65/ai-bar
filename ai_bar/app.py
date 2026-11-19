@@ -1405,12 +1405,11 @@ class AiBarWindow(Gtk.Window):
 
     def _on_public_ip_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
         if event.button == 1:
-            url = "https://librespeed.org/"
+            self._launch(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"])
         elif event.button == 3:
-            url = "http://192.168.178.1/"
+            self._launch(["xdg-open", "http://192.168.178.1/"])
         else:
             return False
-        self._launch(["xdg-open", url])
         return True
 
     def _refresh_public_ip(self) -> bool:

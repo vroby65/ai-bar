@@ -532,7 +532,7 @@ class ClockLayoutTests(unittest.TestCase):
             self.assertEqual(window.public_ip_link.emit("button-press-event", event), number in (1, 3))
         self.assertEqual(window._launch.call_args_list, [
             call(["xdg-open", "http://192.168.178.1/"]),
-            call(["xdg-open", "https://librespeed.org/"]),
+            call(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"]),
         ])
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
