@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -1366,9 +1367,13 @@ class AiBarWindow(Gtk.Window):
         self.date_label.get_style_context().add_class("clock-date")
         self.time_label.set_xalign(0)
         self.date_label.set_xalign(0)
-        self.public_ip_label = Gtk.Label(label="IP: —")
-        self.public_ip_label.set_xalign(0)
-        self.public_ip_label.get_style_context().add_class("clock-date")
+        self.public_ip_label = Gtk.Label(label="IP esterno: —")
+        self.local_ip_label = Gtk.Label(label="IP locale: —")
+        self.ip_stack = Gtk.Stack()
+        for label in (self.public_ip_label, self.local_ip_label):
+            label.set_xalign(0)
+            label.get_style_context().add_class("clock-date")
+            self.ip_stack.add(label)
         self.clock_details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
         self.clock_details.set_valign(Gtk.Align.CENTER)
         self.clock_details.pack_start(self.date_label, False, False, 0)
@@ -1377,7 +1382,7 @@ class AiBarWindow(Gtk.Window):
         self.public_ip_link.set_visible_window(False)
         self.public_ip_link.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.public_ip_link.set_tooltip_text("Sinistro: LibreSpeed · Destro: modem")
-        self.public_ip_link.add(self.public_ip_label)
+        self.public_ip_link.add(self.ip_stack)
         self.public_ip_link.connect("button-press-event", self._on_public_ip_button_press)
         self.network_row.pack_start(self.public_ip_link, False, False, 0)
         ssh_button = SSHServerButton(self._show_error)
@@ -1400,8 +1405,24 @@ class AiBarWindow(Gtk.Window):
         self.public_ip_active = True
         self._refresh_public_ip()
         self.public_ip_timeout_id = GLib.timeout_add_seconds(60, self._refresh_public_ip)
+        self.ip_toggle_timeout_id = GLib.timeout_add(3000, self._toggle_ip)
         wrapper.connect("destroy", self._stop_public_ip)
         return wrapper
+
+    def _toggle_ip(self) -> bool:
+        if self.ip_stack.get_visible_child() is self.public_ip_label:
+            try:
+                # Let the kernel select the outgoing IPv4 without sending a packet.
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
+                    connection.connect(("1.1.1.1", 53))
+                    address = connection.getsockname()[0]
+            except OSError:
+                address = "—"
+            self.local_ip_label.set_text(f"IP locale: {address}")
+            self.ip_stack.set_visible_child(self.local_ip_label)
+        else:
+            self.ip_stack.set_visible_child(self.public_ip_label)
+        return True
 
     def _on_public_ip_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
         if event.button == 1:
@@ -1429,7 +1450,7 @@ class AiBarWindow(Gtk.Window):
 
     def _show_public_ip(self, address: str, latency_ms: float | None) -> bool:
         if self.public_ip_active:
-            self.public_ip_label.set_text(f"IP: {address}")
+            self.public_ip_label.set_text(f"IP esterno: {address}")
             state = "slow" if latency_ms is None or latency_ms > 800 else (
                 "medium" if latency_ms > 200 else "fast")
             style = self.public_ip_label.get_style_context()
@@ -1444,6 +1465,7 @@ class AiBarWindow(Gtk.Window):
     def _stop_public_ip(self, _widget: Gtk.Widget) -> None:
         self.public_ip_active = False
         GLib.source_remove(self.public_ip_timeout_id)
+        GLib.source_remove(self.ip_toggle_timeout_id)
 
     def _on_clock_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
         command = self.config.get("clock", {}).get("command")

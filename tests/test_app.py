@@ -477,6 +477,17 @@ class ClockLayoutTests(unittest.TestCase):
         thread_patch = patch("ai_bar.app.threading.Thread")
         self.thread = thread_patch.start()
         self.addCleanup(thread_patch.stop)
+        self.ip_timer = Mock(return_value=43)
+        timeout_add = GLib.timeout_add
+
+        def add_timeout(interval, callback, *args):
+            if getattr(callback, "__func__", None) is AiBarWindow._toggle_ip:
+                return self.ip_timer(interval, callback, *args)
+            return timeout_add(interval, callback, *args)
+
+        timer_patch = patch("ai_bar.app.GLib.timeout_add", side_effect=add_timeout)
+        timer_patch.start()
+        self.addCleanup(timer_patch.stop)
         remove_patch = patch("ai_bar.app.GLib.source_remove")
         remove_patch.start()
         self.addCleanup(remove_patch.stop)
@@ -494,12 +505,38 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(window.clock_box.get_orientation(), Gtk.Orientation.HORIZONTAL)
         self.assertEqual(window.clock_details.get_orientation(), Gtk.Orientation.VERTICAL)
         self.assertEqual(window.public_ip_label.get_xalign(), 0)
-        self.assertEqual(window.public_ip_label.get_text(), "IP: —")
+        self.assertEqual(window.public_ip_label.get_text(), "IP esterno: —")
         timeout.assert_any_call(60, window._refresh_public_ip)
         clock.destroy()
-        self.assertEqual(remove.call_args_list, [unittest.mock.call(42), unittest.mock.call(42)])
+        self.assertCountEqual(remove.call_args_list, [call(42), call(42), call(43)])
         self.assertFalse(window._show_public_ip("203.0.113.7", 125))
-        self.assertEqual(window.public_ip_label.get_text(), "IP: —")
+        self.assertEqual(window.public_ip_label.get_text(), "IP esterno: —")
+
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    def test_ip_display_alternates_every_three_seconds(self, _timeout):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = default_config()
+        clock = window._build_clock()
+        self.addCleanup(clock.destroy)
+        clock.show_all()
+        self.ip_timer.assert_called_once()
+        interval, toggle = self.ip_timer.call_args.args
+        self.assertEqual(interval, 3000)
+        stack = window.public_ip_link.get_child()
+        self.assertIs(stack.get_visible_child(), window.public_ip_label)
+
+        with patch("ai_bar.app.socket.socket") as socket:
+            connection = socket.return_value.__enter__.return_value
+            connection.getsockname.return_value = ("192.168.1.20", 45000)
+            self.assertTrue(toggle())
+            self.assertEqual(stack.get_visible_child().get_text(), "IP locale: 192.168.1.20")
+            window._show_public_ip("203.0.113.7", 125)
+            self.assertEqual(stack.get_visible_child().get_text(), "IP locale: 192.168.1.20")
+            self.assertTrue(toggle())
+            self.assertEqual(stack.get_visible_child().get_text(), "IP esterno: 203.0.113.7")
+            connection.connect.side_effect = OSError("offline")
+            self.assertTrue(toggle())
+            self.assertEqual(stack.get_visible_child().get_text(), "IP locale: —")
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.ssh_server.SSHServerButton._start_work")
@@ -511,7 +548,8 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(window.clock_box.get_halign(), Gtk.Align.START)
         self.assertEqual(window.time_label.get_xalign(), 0)
         ip, ssh = window.network_row.get_children()
-        self.assertIs(ip.get_child(), window.public_ip_label)
+        self.assertEqual(ip.get_child().get_children(),
+                         [window.public_ip_label, window.local_ip_label])
         self.assertTrue(ssh.get_style_context().has_class("clock-ssh"))
         self.assertEqual(ssh.get_child().get_children()[1].get_text(), "SSH")
         ssh._units = ("ssh.service",)
@@ -570,7 +608,7 @@ class ClockLayoutTests(unittest.TestCase):
         urlopen.assert_called_once_with("https://api.ipify.org", timeout=5)
         idle.assert_called_once_with(window._show_public_ip, "203.0.113.7", 125)
         self.assertFalse(window._show_public_ip("203.0.113.7", 125))
-        self.assertEqual(window.public_ip_label.get_text(), "IP: 203.0.113.7")
+        self.assertEqual(window.public_ip_label.get_text(), "IP esterno: 203.0.113.7")
         for result in (b"invalid", OSError("offline")):
             with self.subTest(result=result):
                 idle.reset_mock()
