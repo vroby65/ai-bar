@@ -573,6 +573,43 @@ class ClockLayoutTests(unittest.TestCase):
             call(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"]),
         ])
 
+    @unittest.skipIf(X is None, "python-xlib not available")
+    @patch("ai_bar.app.GLib.timeout_add_seconds")
+    def test_pointer_clicks_reach_ip_link_during_both_phases(self, _timeout):
+        from Xlib.ext import xtest
+
+        display = xlib_display.Display()
+        self.addCleanup(display.close)
+        if not display.has_extension("XTEST"):
+            self.skipTest("XTEST not available")
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.config = default_config()
+        window._launch = Mock()
+        host = Gtk.Window()
+        self.addCleanup(host.destroy)
+        host.add(window._build_clock())
+        host.show_all()
+        _, root_x, root_y = host.get_window().get_origin()
+
+        for label in (window.public_ip_label, window.local_ip_label):
+            with self.subTest(label=label.get_text()):
+                window.ip_stack.set_visible_child(label)
+                host.get_display().sync()
+                x, y = window.public_ip_link.translate_coordinates(host, 4, 4)
+                xtest.fake_input(display, X.MotionNotify, x=root_x + x, y=root_y + y)
+                for button in (1, 3):
+                    xtest.fake_input(display, X.ButtonPress, button)
+                    xtest.fake_input(display, X.ButtonRelease, button)
+                display.sync()
+                loop = GLib.MainLoop()
+                GLib.timeout_add(50, lambda: (loop.quit(), False)[1])
+                loop.run()
+                self.assertEqual(window._launch.call_args_list, [
+                    call(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"]),
+                    call(["xdg-open", "http://192.168.178.1/"]),
+                ])
+                window._launch.reset_mock()
+
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     def test_panel_reload_is_beside_time_and_keeps_its_action(self, _timeout):
         window = AiBarWindow.__new__(AiBarWindow)

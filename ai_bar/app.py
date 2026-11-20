@@ -1378,8 +1378,8 @@ class AiBarWindow(Gtk.Window):
         self.clock_details.set_valign(Gtk.Align.CENTER)
         self.clock_details.pack_start(self.date_label, False, False, 0)
         self.network_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        # The stack has its own GDK window, so the event box needs one too.
         self.public_ip_link = Gtk.EventBox()
-        self.public_ip_link.set_visible_window(False)
         self.public_ip_link.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.public_ip_link.set_tooltip_text("Sinistro: LibreSpeed · Destro: modem")
         self.public_ip_link.add(self.ip_stack)
