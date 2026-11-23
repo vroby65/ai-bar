@@ -1425,7 +1425,7 @@ class AiBarWindow(Gtk.Window):
         if event.button == 1:
             self._launch(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"])
         elif event.button == 3:
-            self._launch(["xdg-open", "http://192.168.178.1/"])
+            self._launch(["google-chrome", "--app=http://192.168.178.1/"])
         else:
             return False
         return True

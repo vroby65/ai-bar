@@ -98,7 +98,7 @@ and a full-height window tiling button.
 The indicator starts with the public IP and alternates with the local IPv4 address
 every three seconds. Left-click the IP to launch
 the installed LibreSpeed - Speed Test app from Chrome Beta. Right-click it to
-open the local FRITZ!Box at `http://192.168.178.1/`.
+open the local FRITZ!Box at `http://192.168.178.1/` in a dedicated Chrome app window.
 The public IP is fetched from `https://api.ipify.org` in the background at startup and
 every minute. Its color reflects the HTTPS response time, including connection
 setup: green up to 200 ms, yellow up to 800 ms, red above 800 ms or on failure.

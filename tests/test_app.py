@@ -571,7 +571,7 @@ class ClockLayoutTests(unittest.TestCase):
         window._tile_windows_spiral.assert_called_once_with(tile)
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
-    def test_public_ip_opens_librespeed_on_left_click_and_router_on_right_click(self, _timeout):
+    def test_ip_opens_librespeed_on_left_click_and_router_app_on_right_click(self, _timeout):
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = default_config()
         window._launch = Mock()
@@ -582,7 +582,7 @@ class ClockLayoutTests(unittest.TestCase):
             event.button = number
             self.assertEqual(window.public_ip_link.emit("button-press-event", event), number in (1, 3))
         self.assertEqual(window._launch.call_args_list, [
-            call(["xdg-open", "http://192.168.178.1/"]),
+            call(["google-chrome", "--app=http://192.168.178.1/"]),
             call(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"]),
         ])
 
@@ -619,7 +619,7 @@ class ClockLayoutTests(unittest.TestCase):
                 loop.run()
                 self.assertEqual(window._launch.call_args_list, [
                     call(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"]),
-                    call(["xdg-open", "http://192.168.178.1/"]),
+                    call(["google-chrome", "--app=http://192.168.178.1/"]),
                 ])
                 window._launch.reset_mock()
 
