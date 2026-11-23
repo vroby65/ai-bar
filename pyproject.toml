@@ -7,6 +7,9 @@ name = "ai-bar"
 version = "0.1.0"
 description = "A configurable GTK side toolbar with launchers, status items, tray hosting, and an embedded terminal."
 requires-python = ">=3.10"
+dependencies = [
+    "sshserver @ git+https://github.com/vroby65/sshserver.git@a5cb1cbb4ace0d2636de522fb8039cf78920a2ed",
+]
 
 [project.scripts]
 ai-bar = "ai_bar.app:main"
