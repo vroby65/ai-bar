@@ -160,11 +160,11 @@ a tall work area and uses the panel monitor when no external window is focused.
 
 On X11, AI-bar launches `sshserver` in the XEmbed tray. Its icon is green when the
 service or its activation socket is active and gray when both are off, OpenSSH is
-missing, or its status is unavailable. Click the icon to open the menu
-and choose `Attiva` or `Disattiva`. The system password dialog authorizes the
-action. Disabling SSH also stops `ssh.socket`, so incoming connections cannot
-restart the service. The menu controls the current service state and preserves
-startup settings. It requires `openssh-server`, systemd, and `pkexec`.
+missing, or its status is unavailable. Left-click for the Start and Stop controls
+and recent SSH logs, with filters for users, IPs, and event types. Right-click for
+the quick menu. The system authentication dialog authorizes changes to the
+service state. Stopping SSH also stops `ssh.socket` and preserves startup
+settings. The applet requires `openssh-server`, systemd, and `pkexec`.
 
 Click the recording button to choose the audio source, then drag a rectangle on
 the desktop to record that area on X11 at 30 fps, like the screenshot area selector.
