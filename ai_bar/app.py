@@ -982,6 +982,13 @@ button:checked {
   box-shadow: none;
 }
 
+button.clock-tiling {
+  background-color: transparent;
+  border: 0;
+  color: #f2f2ee;
+  padding: 7px;
+}
+
 button.accent-blue {
   background-color: #45a9e6;
 }
@@ -1651,7 +1658,7 @@ class AiBarWindow(Gtk.Window):
 
     def _build_spiral_tile_button(self) -> Gtk.Widget:
         button = Gtk.Button()
-        add_accent_color(button, 0)
+        button.get_style_context().add_class("clock-tiling")
         button.set_relief(Gtk.ReliefStyle.NONE)
         button.set_tooltip_text("Affianca le finestre a chiocciola")
         image = Gtk.Image.new_from_icon_name("view-grid-symbolic", Gtk.IconSize.MENU)

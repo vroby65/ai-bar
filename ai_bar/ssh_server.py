@@ -57,7 +57,7 @@ class SSHServerTray:
             icon_size, Gtk.IconLookupFlags.FORCE_SIZE,
         )
         self.icons = {}
-        for name, value in (("green", "#55c878"), ("red", "#ff6b6b"), ("gray", "#9ea7ac")):
+        for name, value in (("green", "#55c878"), ("gray", "#9ea7ac")):
             color = Gdk.RGBA()
             color.parse(value)
             self.icons[name] = icon_info.load_symbolic(color, None, None, None)[0]
@@ -137,7 +137,7 @@ class SSHServerTray:
         elif self._active:
             color, status, action = "green", "attivo", "Disattiva"
         else:
-            color, status, action = "red", "disattivato", "Attiva"
+            color, status, action = "gray", "disattivato", "Attiva"
         self.icon.props.pixbuf = self.icons[color]
         self.icon.props.tooltip_text = f"Server SSH: {status}"
         self.action.set_label(action)

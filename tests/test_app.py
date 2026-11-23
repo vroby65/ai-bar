@@ -559,6 +559,14 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(tile.get_tooltip_text(), "Affianca le finestre a chiocciola")
         self.assertEqual(tile.get_allocated_height(), header.get_allocated_height())
         self.assertGreater(tile.get_allocated_height(), 1)
+        self.assertEqual(tile.get_child().get_pixel_size(), 20)
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode("utf-8"))
+        style = tile.get_style_context()
+        style.add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        for state in (Gtk.StateFlags.NORMAL, Gtk.StateFlags.PRELIGHT, Gtk.StateFlags.ACTIVE):
+            self.assertEqual(style.get_border(state).left, 0)
+            self.assertEqual(style.get_color(state).to_string(), "rgb(242,242,238)")
         tile.emit("clicked")
         window._tile_windows_spiral.assert_called_once_with(tile)
 

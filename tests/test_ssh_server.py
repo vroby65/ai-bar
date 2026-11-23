@@ -75,9 +75,9 @@ class SSHServerTrayTests(unittest.TestCase):
         self.tray._refresh()
         self.assertEqual(self.worker.call_count, count)
 
-    def test_menu_starts_inactive_ssh(self):
+    def test_inactive_ssh_has_gray_icon_and_can_be_started(self):
         self.tray._finish((False, ("ssh.service",)), None)
-        self.assertIs(self.tray.icon.get_pixbuf(), self.tray.icons["red"])
+        self.assertIs(self.tray.icon.get_pixbuf(), self.tray.icons["gray"])
         self.assertTrue(self.tray.action.get_sensitive())
         self.assertEqual(self.tray.action.get_label(), "Attiva")
         self.tray.action.emit("activate")

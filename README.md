@@ -149,8 +149,8 @@ the monitor of the focused window in a spiral layout. It starts top-to-bottom in
 a tall work area and uses the panel monitor when no external window is focused.
 
 On X11, AI-bar launches the SSH server tray applet. Its icon is green when the
-service or its activation socket is active, red when both are off, and gray when
-OpenSSH is missing or its status is unavailable. Click the icon to open the menu
+service or its activation socket is active and gray when both are off, OpenSSH is
+missing, or its status is unavailable. Click the icon to open the menu
 and choose `Attiva` or `Disattiva`. The system password dialog authorizes the
 action. Disabling SSH also stops `ssh.socket`, so incoming connections cannot
 restart the service. The menu controls the current service state and preserves
