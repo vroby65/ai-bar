@@ -88,9 +88,10 @@ behavior; to return to the buttons, hide and reopen the panel with Super.
 
 By default, left-click the date or time at the top of the panel to open Google Calendar in Google Chrome (`google-chrome`). Set `clock.command` to change this action or disable it with `null`.
 
-The header is left-aligned: reload, large time, then the date above the IP indicator.
+The header is left-aligned: reload, large time, the date above the IP indicator,
+and a full-height window tiling button.
 The indicator starts with the public IP and alternates with the local IPv4 address
-every three seconds. The SSH server button sits beside it. Left-click the IP to launch
+every three seconds. Left-click the IP to launch
 the installed LibreSpeed - Speed Test app from Chrome Beta. Right-click it to
 open the local FRITZ!Box at `http://192.168.178.1/`.
 The public IP is fetched from `https://api.ipify.org` in the background at startup and
@@ -143,16 +144,17 @@ with `config.example.json` and customize:
 
 The default display button opens MATE's display settings (`mate-display-properties`). The default screenshot button immediately starts MATE Screenshot's area selector.
 
-The grid button at the far right of the tray tiles the normal, non-minimized windows on the monitor of the focused window in a spiral layout, starting top-to-bottom when the work area is taller than it is wide; if no external window is focused, it uses the panel monitor.
+The grid button beside the date and IP tiles the normal, non-minimized windows on
+the monitor of the focused window in a spiral layout. It starts top-to-bottom in
+a tall work area and uses the panel monitor when no external window is focused.
 
-The tools are ordered left to right: screenshot, recording, and window tiling.
-The SSH server control appears in the header, beside the IP indicator.
-The SSH button turns green while the server or its activation socket is active.
-Click it to start or stop SSH, authorizing through the system password dialog.
-Stopping also stops `ssh.socket`, so incoming connections cannot restart the
-server. This controls the current session's service state; it does not change
-startup settings. It requires `openssh-server`, systemd, and `pkexec`; if the
-server is missing or its status cannot be read, the button is disabled.
+On X11, AI-bar launches the SSH server tray applet. Its icon is green when the
+service or its activation socket is active, red when both are off, and gray when
+OpenSSH is missing or its status is unavailable. Click the icon to open the menu
+and choose `Attiva` or `Disattiva`. The system password dialog authorizes the
+action. Disabling SSH also stops `ssh.socket`, so incoming connections cannot
+restart the service. The menu controls the current service state and preserves
+startup settings. It requires `openssh-server`, systemd, and `pkexec`.
 
 Click the recording button to choose the audio source, then drag a rectangle on
 the desktop to record that area on X11 at 30 fps, like the screenshot area selector.

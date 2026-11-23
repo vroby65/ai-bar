@@ -353,11 +353,12 @@ class ScreenRecordingTests(unittest.TestCase):
     def test_reload_and_destroy_finalize_the_recording(self, quit_main, execvp):
         window = SimpleNamespace(
             _stop_screen_recording=Mock(), xapp_tray_host=None, tray_host=None,
-            embedded_window_xids={},
+            embedded_window_xids={}, ssh_tray=Mock(),
             volume_update_timeout_id=None, panel_animation_id=None,
             window_list_poll_id=None, super_toggle=None, window_cycle=None)
         AiBarWindow._reload(window)
         window._stop_screen_recording.assert_called_once_with(wait=True)
+        self.assertEqual(window.ssh_tray.mock_calls, [call.force_exit(), call.wait(None)])
         execvp.assert_called_once()
         window._stop_screen_recording.reset_mock()
         AiBarWindow._on_destroy(window, window)
@@ -370,7 +371,7 @@ class ScreenRecordingTests(unittest.TestCase):
     def test_reload_restores_embedded_windows_after_exec(self, restore, execvp):
         window = SimpleNamespace(
             _stop_screen_recording=Mock(), xapp_tray_host=None, tray_host=None,
-            embedded_window_xids={"window:chatgpt": 20},
+            embedded_window_xids={"window:chatgpt": 20}, ssh_tray=None,
         )
         AiBarWindow._reload(window)
         restore.assert_not_called()
@@ -499,7 +500,7 @@ class ClockLayoutTests(unittest.TestCase):
         window.config = default_config()
         clock = window._build_clock()
         self.assertEqual(window.clock_details.get_children(),
-                         [window.date_label, window.network_row])
+                         [window.date_label, window.public_ip_link])
         self.assertEqual(window.clock_box.get_children()[1:],
                          [window.time_label, window.clock_details])
         self.assertEqual(window.clock_box.get_orientation(), Gtk.Orientation.HORIZONTAL)
@@ -508,7 +509,7 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(window.public_ip_label.get_text(), "IP esterno: —")
         timeout.assert_any_call(60, window._refresh_public_ip)
         clock.destroy()
-        self.assertCountEqual(remove.call_args_list, [call(42), call(42), call(43)])
+        self.assertCountEqual(remove.call_args_list, [call(42), call(43)])
         self.assertFalse(window._show_public_ip("203.0.113.7", 125))
         self.assertEqual(window.public_ip_label.get_text(), "IP esterno: —")
 
@@ -539,23 +540,27 @@ class ClockLayoutTests(unittest.TestCase):
             self.assertEqual(stack.get_visible_child().get_text(), "IP locale: —")
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
-    @patch("ai_bar.ssh_server.SSHServerButton._start_work")
-    def test_header_is_left_aligned_and_ssh_is_beside_ip(self, start_work, _timeout):
+    def test_tiling_button_sits_beside_ip_and_fills_header_height(self, _timeout):
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = default_config()
-        clock = window._build_clock()
-        self.addCleanup(clock.destroy)
+        window._tile_windows_spiral = Mock()
+        host = Gtk.Window()
+        self.addCleanup(host.destroy)
+        header = window._build_clock()
+        host.add(header)
+        host.show_all()
+        clock, tile = header.get_children()
+        self.assertIs(clock.get_child(), window.clock_box)
         self.assertEqual(window.clock_box.get_halign(), Gtk.Align.START)
         self.assertEqual(window.time_label.get_xalign(), 0)
-        ip, ssh = window.network_row.get_children()
-        self.assertEqual(ip.get_child().get_children(),
+        self.assertEqual(window.public_ip_link.get_child().get_children(),
                          [window.public_ip_label, window.local_ip_label])
-        self.assertTrue(ssh.get_style_context().has_class("clock-ssh"))
-        self.assertEqual(ssh.get_child().get_children()[1].get_text(), "SSH")
-        ssh._units = ("ssh.service",)
-        start_work.reset_mock()
-        ssh.emit("clicked")
-        start_work.assert_called_once_with(True)
+        self.assertIs(window.clock_details.get_children()[-1], window.public_ip_link)
+        self.assertEqual(tile.get_tooltip_text(), "Affianca le finestre a chiocciola")
+        self.assertEqual(tile.get_allocated_height(), header.get_allocated_height())
+        self.assertGreater(tile.get_allocated_height(), 1)
+        tile.emit("clicked")
+        window._tile_windows_spiral.assert_called_once_with(tile)
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     def test_public_ip_opens_librespeed_on_left_click_and_router_on_right_click(self, _timeout):
@@ -690,9 +695,9 @@ class ClockLayoutTests(unittest.TestCase):
         window.config = default_config()
         window.config["clock"].update(time_format="time", date_format="date")
         window._launch = Mock()
-        clock = window._build_clock()
-        self.addCleanup(clock.destroy)
-
+        header = window._build_clock()
+        self.addCleanup(header.destroy)
+        clock = header.get_children()[0]
         self.assertEqual(window.time_label.get_text(), "time")
         self.assertEqual(window.date_label.get_text(), "date")
         self.assertTrue(window.time_label.is_ancestor(clock))
@@ -718,8 +723,9 @@ class ClockLayoutTests(unittest.TestCase):
                 window.config = default_config()
                 window.config["clock"]["command"] = command
                 window._launch = Mock()
-                clock = window._build_clock()
-                self.addCleanup(clock.destroy)
+                header = window._build_clock()
+                self.addCleanup(header.destroy)
+                clock = header.get_children()[0]
                 event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
                 event.button = 1
                 self.assertEqual(clock.emit("button-press-event", event), command is not None)
@@ -909,7 +915,7 @@ class ClockLayoutTests(unittest.TestCase):
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     @patch("ai_bar.app.XEmbedTrayHost")
     @patch("ai_bar.app.XAppStatusIconHost")
-    def test_status_row_has_no_preferences_and_tiling_is_the_rightmost_tool(
+    def test_status_row_has_no_preferences_and_tray_tools_are_screenshot_and_recording(
         self,
         _xapp_host,
         _xembed_host,
@@ -943,7 +949,6 @@ class ClockLayoutTests(unittest.TestCase):
         window.volume_controls = []
         window.tray_host = None
         window.xapp_tray_host = None
-        window._tile_windows_spiral = Mock()
         window._launch = Mock()
 
         status_area = window._build_tray_row()
@@ -954,7 +959,7 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertEqual(system_status.get_orientation(), Gtk.Orientation.HORIZONTAL)
         tray_row = status_area.get_children()[1]
         tray_flow, tools = tray_row.get_children()
-        screenshot_button, record_button, spiral_button = tools.get_children()
+        screenshot_button, record_button = tools.get_children()
         self.assertEqual(record_button.get_tooltip_text(), "Registra lo schermo")
         self.assertTrue(screenshot_button.get_style_context().has_class("tray-icon-cell"))
         self.assertIsInstance(volume_control, Gtk.Box)
@@ -962,9 +967,6 @@ class ClockLayoutTests(unittest.TestCase):
         self.assertTrue(volume_control.get_hexpand())
         self.assertEqual(display_button.get_tooltip_text(), "Display")
         self.assertEqual(screenshot_button.get_tooltip_text(), "Screenshot")
-        self.assertEqual(
-            spiral_button.get_tooltip_text(), "Affianca le finestre a chiocciola"
-        )
         self.assertIsInstance(tray_flow, Gtk.FlowBox)
         self.assertTrue(tray_row.get_style_context().has_class("tray-row"))
         self.assertNotIn(
@@ -981,8 +983,6 @@ class ClockLayoutTests(unittest.TestCase):
             separator.get_style_context().has_class("tray-window-separator")
         )
         self.assertIs(status_area.get_children()[3], window.window_flow)
-        spiral_button.emit("clicked")
-        window._tile_windows_spiral.assert_called_once_with(spiral_button)
         status_area.destroy()
 
     def test_legacy_screenshot_button_starts_area_selection(self):

@@ -61,7 +61,6 @@ except Exception:  # pragma: no cover - exercised only on systems without python
     rq = None
 
 from .config import ConfigError, default_config, default_config_path, load_config
-from .ssh_server import SSHServerButton
 from .xapp_tray import XAppStatusIconHost
 from .xembed_tray import XEmbedTrayHost
 
@@ -949,13 +948,6 @@ CSS = """
   color: #ff6b6b;
 }
 
-button.status-button.clock-ssh {
-  min-height: 0;
-  min-width: 0;
-  padding: 0 4px;
-  font-size: 11px;
-}
-
 .section-title {
   color: #9ea7ac;
   font-size: 11px;
@@ -998,8 +990,7 @@ button.accent-orange {
   background-color: #f58a43;
 }
 
-button.accent-green,
-button.status-button.ssh-active {
+button.accent-green {
   background-color: #55c878;
 }
 
@@ -1206,6 +1197,7 @@ class AiBarWindow(Gtk.Window):
         self.web_context: Any | None = None
         self.tray_host: XEmbedTrayHost | None = None
         self.xapp_tray_host: XAppStatusIconHost | None = None
+        self.ssh_tray: Gio.Subprocess | None = None
         self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
         self.battery_statuses: list[tuple[Gtk.Button, Gtk.Label, Gtk.Image]] = []
         self.volume_controls: list[tuple[Gtk.Scale, Gtk.Label, Gtk.Image]] = []
@@ -1263,6 +1255,14 @@ class AiBarWindow(Gtk.Window):
         self._install_css()
         self.add(self._build_content())
         self.show_all()
+        if isinstance(self.get_display(), GdkX11.X11Display):
+            icon_size = int(self.config.get("tray", {}).get("icon_size", 24))
+            self.ssh_tray = Gio.Subprocess.new(
+                [sys.executable, "-m", "ai_bar.ssh_server", str(icon_size)],
+                Gio.SubprocessFlags.STDIN_PIPE,
+            )
+            panel_lifetime = self.ssh_tray.get_stdin_pipe()
+            self.connect("destroy", lambda _window: panel_lifetime.close(None))
         self._update_status_items()
 
     def _configure_webkit_persistence(self) -> None:
@@ -1377,19 +1377,13 @@ class AiBarWindow(Gtk.Window):
         self.clock_details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
         self.clock_details.set_valign(Gtk.Align.CENTER)
         self.clock_details.pack_start(self.date_label, False, False, 0)
-        self.network_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         # The stack has its own GDK window, so the event box needs one too.
         self.public_ip_link = Gtk.EventBox()
         self.public_ip_link.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.public_ip_link.set_tooltip_text("Sinistro: LibreSpeed · Destro: modem")
         self.public_ip_link.add(self.ip_stack)
         self.public_ip_link.connect("button-press-event", self._on_public_ip_button_press)
-        self.network_row.pack_start(self.public_ip_link, False, False, 0)
-        ssh_button = SSHServerButton(self._show_error)
-        add_accent_color(ssh_button, 0)
-        ssh_button.get_style_context().add_class("clock-ssh")
-        self.network_row.pack_start(ssh_button, False, False, 0)
-        self.clock_details.pack_start(self.network_row, False, False, 0)
+        self.clock_details.pack_start(self.public_ip_link, False, False, 0)
         for button_config in self.config.get("session_buttons", []):
             if button_config.get("action") == "reload":
                 button = self._build_session_button(button_config, icon_only=True)
@@ -1399,6 +1393,9 @@ class AiBarWindow(Gtk.Window):
         self.clock_box.pack_start(self.clock_details, False, False, 0)
         wrapper.add(self.clock_box)
         wrapper.connect("button-press-event", self._on_clock_button_press)
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        header.pack_start(wrapper, False, False, 0)
+        header.pack_start(self._build_spiral_tile_button(), False, False, 0)
 
         self._update_clock()
         GLib.timeout_add_seconds(1, self._update_clock)
@@ -1407,7 +1404,7 @@ class AiBarWindow(Gtk.Window):
         self.public_ip_timeout_id = GLib.timeout_add_seconds(60, self._refresh_public_ip)
         self.ip_toggle_timeout_id = GLib.timeout_add(3000, self._toggle_ip)
         wrapper.connect("destroy", self._stop_public_ip)
-        return wrapper
+        return header
 
     def _toggle_ip(self) -> bool:
         if self.ip_stack.get_visible_child() is self.public_ip_label:
@@ -1517,7 +1514,6 @@ class AiBarWindow(Gtk.Window):
             if item.get("type") == "screenshot":
                 tools.pack_start(self._build_status_button(item, compact=True), False, False, 0)
         tools.pack_start(self._build_screen_recording_button(), False, False, 0)
-        tools.pack_start(self._build_spiral_tile_button(), False, False, 0)
         tray_row.pack_end(tools, False, False, 0)
 
         self.window_flow = Gtk.FlowBox()
@@ -1655,11 +1651,11 @@ class AiBarWindow(Gtk.Window):
 
     def _build_spiral_tile_button(self) -> Gtk.Widget:
         button = Gtk.Button()
-        button.get_style_context().add_class("tray-icon-cell")
+        add_accent_color(button, 0)
         button.set_relief(Gtk.ReliefStyle.NONE)
         button.set_tooltip_text("Affianca le finestre a chiocciola")
         image = Gtk.Image.new_from_icon_name("view-grid-symbolic", Gtk.IconSize.MENU)
-        image.set_pixel_size(16)
+        image.set_pixel_size(20)
         button.add(image)
         button.connect("clicked", self._tile_windows_spiral)
         return button
@@ -3742,6 +3738,9 @@ class AiBarWindow(Gtk.Window):
 
     def _reload(self) -> None:
         self._stop_screen_recording(wait=True)
+        if self.ssh_tray is not None:
+            self.ssh_tray.force_exit()
+            self.ssh_tray.wait(None)
         # The old Gtk.Socket connection still owns the X11 save-set. Restore
         # only after exec closes that connection, or its cleanup undoes the map.
         os.environ["AI_BAR_RESTORE_XIDS"] = json.dumps(list(self.embedded_window_xids.values()))

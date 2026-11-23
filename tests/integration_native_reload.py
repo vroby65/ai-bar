@@ -63,7 +63,7 @@ try:
     print('embedded',w.get_attributes().map_state,hex(w.query_tree().parent.id),flush=True)
     os.environ['CHECK_STAGE']=json.dumps([xid,chrome.pid,wm.pid,profile.name])
     state=SimpleNamespace(_stop_screen_recording=lambda **kw:None,
-        embedded_window_xids={'window:test':xid},xapp_tray_host=None,tray_host=None)
+        embedded_window_xids={'window:test':xid},xapp_tray_host=None,tray_host=None,ssh_tray=None)
     with patch('ai_bar.app.os.execvp',side_effect=lambda *args:os.execv(sys.executable,[sys.executable,__file__])):
         AiBarWindow._reload(state)
 finally:
