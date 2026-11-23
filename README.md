@@ -96,10 +96,11 @@ The status row includes a battery indicator with its percentage, charging state,
 and icon; it is hidden when no battery is detected.
 
 On X11, AI-bar launches `sshserver` in the XEmbed tray. Its icon is green when
-the service or its activation socket is active and gray otherwise. Click it and
-choose `Attiva` or `Disattiva` to control OpenSSH through the system authentication
-dialog. Stopping SSH also stops its activation socket. The applet requires
-`openssh-server`, systemd, and `pkexec`. It preserves the startup settings.
+the service or its activation socket is active and gray otherwise. Left-click
+for the Start and Stop controls and recent SSH logs, with filters for users, IPs,
+and event types. Right-click for the quick menu. System authentication authorizes
+changes to the service state. Stopping SSH also stops its activation socket and
+preserves startup settings. The applet requires `openssh-server`, systemd, and `pkexec`.
 
 The tools at the right of the tray are ordered left to right: screenshot,
 screen recording, and window tiling. Click the recording button to choose no audio,
