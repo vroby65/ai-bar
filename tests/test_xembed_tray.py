@@ -1,4 +1,6 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import gi
 
@@ -6,10 +8,22 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Gtk
 
-from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, XEmbedIconBin, XEmbedTrayHost
+from ai_bar.xembed_tray import TRAY_BACKGROUND_RGB, X, XEmbedIconBin, XEmbedTrayHost
 
 
 class XEmbedTrayHostTests(unittest.TestCase):
+    @unittest.skipIf(X is None, "python-xlib not available")
+    def test_primary_click_is_replayed_only_when_no_window_was_activated(self):
+        activate_windows = Mock(side_effect=[True, False])
+        host = XEmbedTrayHost(container=object(), activate_windows=activate_windows)
+        host.display = Mock()
+        host.click_pids[10] = 42
+        event = SimpleNamespace(type=X.ButtonPress, window=SimpleNamespace(id=10), time=123)
+        for mode in (X.AsyncPointer, X.ReplayPointer):
+            host._handle_event(event)
+            activate_windows.assert_called_with(42, 123)
+            host.display.allow_events.assert_called_with(mode, 123)
+
     def test_icon_bin_clamps_icons_that_request_more_space(self):
         window = Gtk.OffscreenWindow()
         cell = Gtk.EventBox()

@@ -26,6 +26,7 @@ from ai_bar.app import (
     VolumeState,
     RecordingAreaSelector,
     WindowInfo,
+    Wnck,
     X,
     X11SuperToggle,
     application_ids_match,
@@ -33,7 +34,6 @@ from ai_bar.app import (
     command_to_shell_line,
     configuration_assistant_command,
     recording_audio_sources,
-    find_window_by_xid,
     focus_x11_window,
     restore_x11_window,
     release_x11_window,
@@ -981,8 +981,8 @@ class ClockLayoutTests(unittest.TestCase):
             display_button,
             [child.get_child() for child in tray_flow.get_children()],
         )
-        _xapp_host.assert_called_once_with(tray_flow, 24, "left")
-        _xembed_host.assert_called_once_with(tray_flow, 24)
+        _xapp_host.assert_called_once_with(tray_flow, 24, "left", window._activate_tray_window)
+        _xembed_host.assert_called_once_with(tray_flow, 24, window._activate_tray_window)
         self.assertEqual(window.window_flow.get_max_children_per_line(), 20)
         separator = status_area.get_children()[2]
         self.assertIsInstance(separator, Gtk.Separator)
@@ -1289,7 +1289,7 @@ class ClockLayoutTests(unittest.TestCase):
         }
         window.window_flow = Gtk.FlowBox()
         window.window_children = []
-        window._activate_window = Mock()
+        window._present_matching_window = Mock()
         window._launch = Mock()
 
         window._rebuild_window_buttons(
@@ -1329,17 +1329,41 @@ class ClockLayoutTests(unittest.TestCase):
         buttons[2].emit("clicked")
         buttons[2].emit("clicked")
 
-        self.assertEqual(
-            window._activate_window.call_args_list,
-            [
-                unittest.mock.call(10),
-                unittest.mock.call(11),
-                unittest.mock.call(21),
-                unittest.mock.call(20),
-            ],
-        )
+        matching_xids = []
+        for activation in window._present_matching_window.call_args_list:
+            matches, _timestamp = activation.args
+            matching_xids.append([
+                xid for xid in (10, 11, 20, 21) if matches(Mock(get_xid=lambda: xid))
+            ])
+        self.assertEqual(matching_xids, [[10, 11], [10, 11], [20, 21], [20, 21]])
         window._launch.assert_called_once_with(["gnome-terminal"], maximized=False)
         window.window_flow.destroy()
+
+    @unittest.skipIf(Wnck is None, "libwnck not available")
+    def test_tray_maximizes_and_cycles_in_a_stable_order_after_restacking(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.own_xid = 99
+        screen = window.wnck_screen = Mock()
+        first, second, third, unrelated = [
+            Mock(get_xid=Mock(return_value=xid), get_pid=Mock(return_value=pid),
+                 get_window_type=Mock(return_value=Wnck.WindowType.NORMAL))
+            for xid, pid in [(10, 123), (20, 123), (30, 123), (40, 456)]
+        ]
+        for active, stack, target in (
+            (unrelated, [second, third, first, unrelated], first),
+            (first, [second, third, unrelated, first], second),
+            (second, [third, unrelated, first, second], third),
+            (third, [unrelated, first, second, third], first),
+        ):
+            screen.get_active_window.return_value = active
+            screen.get_windows_stacked.return_value = stack
+            target.reset_mock()
+            self.assertTrue(window._activate_tray_window(123, 42))
+            self.assertIn(call.maximize(), target.mock_calls)
+            target.activate.assert_called_once_with(42)
+            target.minimize.assert_not_called()
+        unrelated.activate.assert_not_called()
+        self.assertFalse(window._activate_tray_window(999, 42))
 
     def test_pinned_open_window_is_underlined_without_focus(self):
         window = AiBarWindow.__new__(AiBarWindow)
@@ -1357,7 +1381,6 @@ class ClockLayoutTests(unittest.TestCase):
         }
         window.window_flow = Gtk.FlowBox()
         window.window_children = []
-        window._activate_window = Mock()
 
         window._rebuild_window_buttons(
             [WindowInfo(10, "Firefox", False, None, "firefox")]
@@ -1373,7 +1396,6 @@ class ClockLayoutTests(unittest.TestCase):
         window.config = {"launcher_groups": []}
         window.window_flow = Gtk.FlowBox()
         window.window_children = []
-        window._activate_window = Mock()
 
         window._rebuild_window_buttons(
             [WindowInfo(10, "Editor", True, None, "editor")]
@@ -2104,8 +2126,8 @@ class ClockLayoutTests(unittest.TestCase):
 
         self.assertEqual(status_flow.get_direction(), Gtk.TextDirection.LTR)
         self.assertEqual(tray_flow.get_direction(), Gtk.TextDirection.LTR)
-        xapp_host.assert_called_once_with(tray_flow, 24, "left")
-        xembed_host.assert_called_once_with(tray_flow, 24)
+        xapp_host.assert_called_once_with(tray_flow, 24, "left", window._activate_tray_window)
+        xembed_host.assert_called_once_with(tray_flow, 24, window._activate_tray_window)
 
         status_area.destroy()
 
@@ -2611,18 +2633,6 @@ class ClockLayoutTests(unittest.TestCase):
     def test_clean_window_title_collapses_whitespace(self):
         self.assertEqual(clean_window_title("  Terminale   - fish  "), "Terminale - fish")
         self.assertEqual(clean_window_title("   "), "Finestra")
-
-    def test_find_window_by_xid_uses_current_window_list(self):
-        class Window:
-            def __init__(self, xid):
-                self.xid = xid
-
-            def get_xid(self):
-                return self.xid
-
-        target = Window(20)
-        self.assertIs(find_window_by_xid([Window(10), target], 20), target)
-        self.assertIsNone(find_window_by_xid([Window(10)], 20))
 
     def test_super_toggle_triggers_only_when_super_is_tapped_alone(self):
         callback = Mock()
@@ -3550,6 +3560,7 @@ class DetachTests(unittest.TestCase):
 
         window._switch_terminal(["claude"], "Claude")
 
+        detached.maximize.assert_called_once_with()
         detached.present.assert_called_once()
         window.terminal_notebook.set_current_page.assert_not_called()
         window.terminal_notebook.append_page.assert_not_called()
@@ -3568,6 +3579,7 @@ class DetachTests(unittest.TestCase):
         with patch("ai_bar.app.GLib.idle_add") as idle_add:
             window._switch_embedded_window("menugui", "Menu")
 
+        detached.maximize.assert_called_once_with()
         detached.present.assert_called_once_with()
         window.terminal_notebook.set_current_page.assert_not_called()
         idle_add.assert_called_once_with(window._focus_embedded_window, socket)
@@ -3581,6 +3593,7 @@ class DetachTests(unittest.TestCase):
 
         window._switch_webview("https://example.com", "Chat")
 
+        detached.maximize.assert_called_once_with()
         detached.present.assert_called_once()
         window.terminal_notebook.set_current_page.assert_not_called()
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any
+from typing import Any, Callable
 
 import gi
 
@@ -36,11 +36,15 @@ def menu_anchor_for_side(
 
 
 class XAppStatusIconButton(Gtk.Button):
-    def __init__(self, proxy: Any, icon_size: int, panel_side: str) -> None:
+    def __init__(
+        self, proxy: Any, icon_size: int, panel_side: str,
+        activate_windows: Callable[[int, int], bool] | None = None,
+    ) -> None:
         super().__init__()
         self.proxy = proxy
         self.icon_size = icon_size
         self.panel_side = panel_side
+        self.activate_windows = activate_windows
         self.proxy_handlers: list[int] = []
 
         self.set_can_focus(False)
@@ -166,8 +170,21 @@ class XAppStatusIconButton(Gtk.Button):
         return Gdk.EVENT_STOP
 
     def _on_primary_clicked(self, _button: Gtk.Button) -> None:
-        x, y, position = self._menu_anchor()
         event_time = Gtk.get_current_event_time()
+        if self.activate_windows is not None:
+            try:
+                pid, = self.proxy.get_connection().call_sync(
+                    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                    "GetConnectionUnixProcessID", GLib.Variant("(s)", (self.proxy.get_name(),)),
+                    GLib.VariantType.new("(u)"), Gio.DBusCallFlags.NONE, 250, None,
+                ).unpack()
+            except GLib.Error:
+                pass
+            else:
+                if self.activate_windows(pid, event_time):
+                    return
+
+        x, y, position = self._menu_anchor()
         self.proxy.call_button_press(
             x, y, Gdk.BUTTON_PRIMARY, event_time, position, None, None
         )
@@ -189,11 +206,13 @@ class XAppStatusIconButton(Gtk.Button):
 
 class XAppStatusIconHost:
     def __init__(
-        self, container: Gtk.FlowBox, icon_size: int = 16, panel_side: str = "left"
+        self, container: Gtk.FlowBox, icon_size: int = 16, panel_side: str = "left",
+        activate_windows: Callable[[int, int], bool] | None = None,
     ) -> None:
         self.container = container
         self.icon_size = icon_size
         self.panel_side = panel_side
+        self.activate_windows = activate_windows
         self.monitor: Any = None
         self.monitor_handlers: list[int] = []
         self.buttons: dict[str, XAppStatusIconButton] = {}
@@ -253,7 +272,7 @@ class XAppStatusIconHost:
         if key in self.buttons:
             return
 
-        button = XAppStatusIconButton(proxy, self.icon_size, self.panel_side)
+        button = XAppStatusIconButton(proxy, self.icon_size, self.panel_side, self.activate_windows)
         button.set_direction(Gtk.TextDirection.LTR)
         button.set_halign(Gtk.Align.CENTER)
         self.buttons[key] = button

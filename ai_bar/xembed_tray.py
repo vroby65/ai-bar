@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, Callable
 
 from gi.repository import GLib, Gtk
 
 try:
-    from Xlib import X, display, protocol
+    from Xlib import X, display, error, protocol
+    from Xlib.ext import res
 except Exception:  # pragma: no cover - exercised only on systems without python-xlib.
     X = None
     display = None
@@ -46,9 +47,13 @@ class XEmbedIconBin(Gtk.Bin):
 
 
 class XEmbedTrayHost:
-    def __init__(self, container: Gtk.FlowBox, icon_size: int = 16) -> None:
+    def __init__(
+        self, container: Gtk.FlowBox, icon_size: int = 16,
+        activate_windows: Callable[[int, int], bool] | None = None,
+    ) -> None:
         self.container = container
         self.icon_size = icon_size
+        self.activate_windows = activate_windows
         self.display: Any = None
         self.owner: Any = None
         self.icon_background_pixel: int | None = None
@@ -56,6 +61,7 @@ class XEmbedTrayHost:
         self.opcode_atom: int | None = None
         self.sockets: dict[int, Gtk.Widget] = {}
         self.flow_children: dict[int, Gtk.FlowBoxChild] = {}
+        self.click_pids: dict[int, int] = {}
         self.poll_id: int | None = None
         self.enabled = False
 
@@ -166,6 +172,17 @@ class XEmbedTrayHost:
         return True
 
     def _handle_event(self, event: Any) -> None:
+        if event.type == X.ButtonPress:
+            handled = False
+            try:
+                pid = self.click_pids.get(event.window.id)
+                if pid is not None and self.activate_windows is not None:
+                    handled = self.activate_windows(pid, event.time)
+            finally:
+                self.display.allow_events(X.AsyncPointer if handled else X.ReplayPointer, event.time)
+                self.display.flush()
+            return
+
         if event.type != X.ClientMessage or event.client_type != self.opcode_atom:
             return
 
@@ -210,7 +227,32 @@ class XEmbedTrayHost:
 
         self.sockets[xid] = cell
         self.flow_children[xid] = flow_child
+        self._grab_primary_click(socket, xid)
         self.container.show_all()
+
+    def _grab_primary_click(self, socket: Gtk.Socket, icon_xid: int) -> None:
+        if self.activate_windows is None or not self.display.has_extension("X-Resource"):
+            return
+        try:
+            ids = self.display.res_query_client_ids([
+                {"client": icon_xid, "mask": res.LocalClientPIDMask},
+            ]).ids
+        except error.XError:
+            return
+        if not ids or not ids[0].value or ids[0].value[0] <= 0:
+            return
+
+        socket_xid = socket.get_id()
+        window = self.display.create_resource_object("window", socket_xid)
+        # Pause Button1 until the panel can either handle it or replay it to the icon.
+        window.grab_button(
+            X.Button1, X.AnyModifier, False, X.ButtonPressMask,
+            X.GrabModeSync, X.GrabModeAsync, X.NONE, X.NONE,
+            onerror=error.CatchError(error.BadAccess, error.BadWindow),
+        )
+        self.display.flush()
+        self.click_pids[socket_xid] = ids[0].value[0]
+        socket.connect("destroy", lambda _socket: self.click_pids.pop(socket_xid, None))
 
     def _apply_icon_background(self, xid: int) -> None:
         if self.display is None or self.icon_background_pixel is None:

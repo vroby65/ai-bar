@@ -35,6 +35,26 @@ class FakeMonitor:
 
 
 class XAppStatusIconHostTests(unittest.TestCase):
+    def test_primary_click_uses_the_tray_application_windows_when_available(self):
+        proxy = Mock()
+        proxy.props = SimpleNamespace(icon_name="", label="", tooltip_text="", visible=True)
+        proxy.get_name.return_value = "org.x.StatusIcon.mintUpdate_py"
+        lookup = proxy.get_connection.return_value.call_sync
+        lookup.return_value.unpack.return_value = (42,)
+        activate_windows = Mock(side_effect=[True, False])
+        button = XAppStatusIconButton(proxy, 16, "left", activate_windows)
+        self.addCleanup(button.destroy)
+        self.addCleanup(button.close)
+
+        button.emit("clicked")
+        activate_windows.assert_called_once_with(42, 0)
+        proxy.call_button_press.assert_not_called()
+        proxy.call_button_release.assert_not_called()
+
+        button.emit("clicked")
+        proxy.call_button_press.assert_called_once()
+        proxy.call_button_release.assert_called_once()
+
     def test_primary_click_forwards_press_and_release(self):
         proxy = Mock()
         proxy.props = SimpleNamespace(

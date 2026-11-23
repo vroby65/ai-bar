@@ -297,13 +297,6 @@ def configuration_assistant_command(config_path: Path) -> list[str]:
     ]
 
 
-def find_window_by_xid(windows: list[Any], xid: int) -> Any | None:
-    for window in windows:
-        if int(window.get_xid()) == xid:
-            return window
-    return None
-
-
 def x11_pointer_inside_window(xid: int) -> bool:
     if X is None or xlib_display is None:
         return False
@@ -1508,9 +1501,10 @@ class AiBarWindow(Gtk.Window):
             tray_flow,
             icon_size,
             str(self.config["panel"].get("side", "left")),
+            self._activate_tray_window,
         )
         if self.config.get("tray", {}).get("xembed", True):
-            self.tray_host = XEmbedTrayHost(tray_flow, icon_size)
+            self.tray_host = XEmbedTrayHost(tray_flow, icon_size, self._activate_tray_window)
 
         tray_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         tray_row.get_style_context().add_class("tray-row")
@@ -1835,21 +1829,14 @@ class AiBarWindow(Gtk.Window):
     def _connect_window_cycle(
         self, button: Gtk.Button, windows: list[WindowInfo]
     ) -> None:
-        active_index = next(
-            (index for index, window in enumerate(windows) if window.active),
-            None,
-        )
-        next_index = (
-            len(windows) - 1
-            if active_index is None
-            else (active_index + 1) % len(windows)
-        )
+        xids = {window.xid for window in windows}
 
         def activate_next(_button: Gtk.Button) -> None:
-            nonlocal next_index
-            self._activate_window(windows[next_index].xid)
-            next_index = (next_index + 1) % len(windows)
+            self._present_matching_window(
+                lambda window: window.get_xid() in xids, Gtk.get_current_event_time()
+            )
 
+        button.set_focus_on_click(False)
         button.connect("clicked", activate_next)
 
     def _build_window_button(
@@ -2793,16 +2780,42 @@ class AiBarWindow(Gtk.Window):
                 if isinstance(page, Gtk.Socket):
                     GLib.idle_add(self._focus_embedded_window, page)
 
-    def _activate_window(self, xid: int) -> None:
+    def _activate_tray_window(self, pid: int, timestamp: int) -> bool:
+        return self._present_matching_window(
+            lambda window: window.get_pid() == pid
+            and window.get_window_type() == Wnck.WindowType.NORMAL,
+            timestamp,
+        )
+
+    def _present_matching_window(
+        self, matches: Callable[[Any], bool], timestamp: int
+    ) -> bool:
         if self.wnck_screen is None:
-            return
-        window = find_window_by_xid(self.wnck_screen.get_windows_stacked(), xid)
-        if window is None:
-            return
+            return False
+
         try:
-            window.activate(Gtk.get_current_event_time())
+            self.wnck_screen.force_update()
+            windows = [
+                window for window in self.wnck_screen.get_windows_stacked()
+                if window.get_xid() != self.own_xid and matches(window)
+            ]
+            if not windows:
+                return False
+            active = self.wnck_screen.get_active_window()
+            if active is not None and active.get_xid() == self.own_xid:
+                active = self.wnck_screen.get_previously_active_window()
+            if active in windows:
+                # Raising a window changes its stacking position, so cycle by XID.
+                windows.sort(key=lambda window: window.get_xid())
+                target = windows[(windows.index(active) + 1) % len(windows)]
+            else:
+                target = windows[-1]
+            target.maximize()
+            target.activate(timestamp)
         except Exception as exc:
-            print(f"ai-bar: finestra non attivata {xid}: {exc}", file=sys.stderr)
+            print(f"ai-bar: finestra non attivata: {exc}", file=sys.stderr)
+            return False
+        return True
 
     def _focused_monitor(self, window: Any | None) -> Any | None:
         if window is None:
@@ -3025,6 +3038,7 @@ class AiBarWindow(Gtk.Window):
         # l'ultima scheda invece di dirlo.
         detached = self.detached.get(key)
         if detached is not None:
+            detached.maximize()
             detached.present()
             return
 
@@ -3052,6 +3066,7 @@ class AiBarWindow(Gtk.Window):
         key = "window:" + command_to_shell_line(command)
         detached = self.detached.get(key)
         if detached is not None:
+            detached.maximize()
             detached.present()
             widget = self.embedded.get(key)
             if widget is not None and key in self.embedded_window_xids:
@@ -3213,6 +3228,7 @@ class AiBarWindow(Gtk.Window):
         # l'ultima scheda invece di dirlo.
         detached = self.detached.get(key)
         if detached is not None:
+            detached.maximize()
             detached.present()
             return
 
