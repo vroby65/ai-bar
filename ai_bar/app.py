@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Callable
 
@@ -59,7 +60,6 @@ except Exception:  # pragma: no cover - exercised only on systems without python
     rq = None
 
 from .config import ConfigError, default_config, default_config_path, load_config
-from .ssh_server import SSHServerButton
 from .xapp_tray import XAppStatusIconHost
 from .xembed_tray import XEmbedTrayHost
 
@@ -690,13 +690,6 @@ CSS = """
   color: #ff6b6b;
 }
 
-button.status-button.clock-ssh {
-  min-height: 0;
-  min-width: 0;
-  padding: 0 4px;
-  font-size: 11px;
-}
-
 .section-title {
   color: #9ea7ac;
   font-size: 11px;
@@ -749,10 +742,6 @@ button.launcher-button.detached-launcher {
 button.window-button {
   min-height: 30px;
   padding: 4px 7px;
-}
-
-button.status-button.ssh-active {
-  background-color: #55c878;
 }
 
 button.status-button {
@@ -868,6 +857,7 @@ class AiBarWindow(Gtk.Window):
         self.web_context: Any | None = None
         self.tray_host: XEmbedTrayHost | None = None
         self.xapp_tray_host: XAppStatusIconHost | None = None
+        self.ssh_tray: Gio.Subprocess | None = None
         self.status_labels: list[tuple[dict[str, Any], Gtk.Label]] = []
         self.battery_statuses: list[tuple[Gtk.Button, Gtk.Label, Gtk.Image]] = []
         self.volume_controls: list[tuple[Gtk.Scale, Gtk.Label, Gtk.Image]] = []
@@ -925,6 +915,18 @@ class AiBarWindow(Gtk.Window):
         self._install_css()
         self.add(self._build_content())
         self.show_all()
+        self._start_ssh_tray()
+
+    def _start_ssh_tray(self) -> None:
+        if not isinstance(self.get_display(), GdkX11.X11Display) or find_spec("sshserver") is None:
+            return
+        icon_size = int(self.config.get("tray", {}).get("icon_size", 24))
+        self.ssh_tray = Gio.Subprocess.new(
+            [sys.executable, "-m", "sshserver", "--icon-size", str(icon_size), "--watch-stdin"],
+            Gio.SubprocessFlags.STDIN_PIPE,
+        )
+        panel_lifetime = self.ssh_tray.get_stdin_pipe()
+        self.connect("destroy", lambda _window: panel_lifetime.close(None))
 
     def _configure_webkit_cookie_persistence(self) -> None:
         if WebKit2 is None:
@@ -1023,18 +1025,13 @@ class AiBarWindow(Gtk.Window):
         self.clock_details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=CLOCK_VERTICAL_SPACING)
         self.clock_details.set_valign(Gtk.Align.CENTER)
         self.clock_details.pack_start(self.date_label, False, False, 0)
-        self.network_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         self.public_ip_link = Gtk.EventBox()
         self.public_ip_link.set_visible_window(False)
         self.public_ip_link.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.public_ip_link.set_tooltip_text("Apri LibreSpeed nel browser")
         self.public_ip_link.add(self.public_ip_label)
         self.public_ip_link.connect("button-press-event", self._on_public_ip_button_press)
-        self.network_row.pack_start(self.public_ip_link, False, False, 0)
-        ssh_button = SSHServerButton(self._show_error)
-        ssh_button.get_style_context().add_class("clock-ssh")
-        self.network_row.pack_start(ssh_button, False, False, 0)
-        self.clock_details.pack_start(self.network_row, False, False, 0)
+        self.clock_details.pack_start(self.public_ip_link, False, False, 0)
         for button_config in self.config.get("session_buttons", []):
             if button_config.get("action") == "reload":
                 button = self._build_session_button(button_config, icon_only=True)
@@ -3106,6 +3103,9 @@ class AiBarWindow(Gtk.Window):
 
     def _reload(self) -> None:
         self._stop_screen_recording(wait=True)
+        if self.ssh_tray is not None:
+            self.ssh_tray.force_exit()
+            self.ssh_tray.wait(None)
         if self.xapp_tray_host is not None:
             self.xapp_tray_host.stop()
         if self.tray_host is not None:

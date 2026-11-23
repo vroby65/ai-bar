@@ -14,6 +14,8 @@ Run the script as a regular user, without `sudo`: it requests elevated privilege
 - enables GNOME Keyring so LightDM can unlock it with the login password
 - installs the `ai-bar` command with `pipx` in editable mode and links `ai-bar`,
   `ai-bar-openbox-session`, and `ai-bar-askpass` into `/usr/local/bin`
+- installs the [sshserver](https://github.com/vroby65/sshserver) applet in the
+  same Python environment
 - creates `~/.config/ai-bar/config.json` if it does not exist, using the
   configuration bundled with the installer
 - installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
@@ -34,7 +36,10 @@ To run it directly from the checkout during development:
 python3 -m ai_bar --config config.example.json
 ```
 
-The editable installation loads Python code directly from this checkout. After a code change, use the `Reload` button to test it without running the installer again.
+The editable installation loads Python code directly from this checkout. Use
+the `Reload` button after a code change. If you are updating an installation
+from before the external SSH applet, rerun `./install.sh` before reloading to
+install the new dependency.
 
 On X11, Shift+Tab activates the next window on the current desktop, including
 minimized windows and AI-bar itself. Returning to AI-bar restores keyboard focus
@@ -45,7 +50,7 @@ controls or completing terminal commands. Shift+Tab is reserved for switching
 windows while AI-bar is running.
 
 The header is left-aligned: reload, large time, then the date above the public IP.
-The SSH server button sits beside the IP. Click the public IP to open
+Click the public IP to open
 [LibreSpeed](https://librespeed.org/) in the default browser.
 The IP is fetched from `https://api.ipify.org` in the background at startup and
 every minute. Its color reflects the HTTPS response time, including connection
@@ -88,11 +93,13 @@ The default screenshot button immediately starts MATE Screenshot's area selector
 The separate button at the left of the volume control opens the configuration assistant in the embedded terminal. Every click discards its previous terminal page and starts with a clean command prompt. Agent commands are remembered in `~/.config/ai-bar/config-assistant.json` (or below `XDG_CONFIG_HOME`) and offered as the default next time. Enter `edit` instead to open the active JSON file with `$VISUAL`, `$EDITOR`, or `sensible-editor`; this temporary action does not replace the remembered agent command. Agent commands receive the configuration path and instructions to discuss the requested correction, preserve unrelated settings, and validate the result.
 
 The status row includes a battery indicator with its percentage, charging state,
-and icon; it is hidden when no battery is detected. The SSH button beside the public IP shows
-whether the local SSH service or socket is active. Click it to start or stop the
-server through the system authentication dialog. Stopping SSH also stops socket
-activation. Install `openssh-server` separately to use this control; the button is
-disabled when the server is unavailable. It does not change startup settings.
+and icon; it is hidden when no battery is detected.
+
+On X11, AI-bar launches `sshserver` in the XEmbed tray. Its icon is green when
+the service or its activation socket is active and gray otherwise. Click it and
+choose `Attiva` or `Disattiva` to control OpenSSH through the system authentication
+dialog. Stopping SSH also stops its activation socket. The applet requires
+`openssh-server`, systemd, and `pkexec`. It preserves the startup settings.
 
 The tools at the right of the tray are ordered left to right: screenshot,
 screen recording, and window tiling. Click the recording button to choose no audio,

@@ -298,11 +298,13 @@ class ScreenRecordingTests(unittest.TestCase):
     def test_reload_and_destroy_finalize_the_recording(self, quit_main, execvp):
         window = SimpleNamespace(
             _stop_screen_recording=Mock(), xapp_tray_host=None, tray_host=None,
-            embedded_window_xids={},
+            embedded_window_xids={}, ssh_tray=Mock(),
             volume_update_timeout_id=None, panel_animation_id=None,
             window_list_poll_id=None, super_toggle=None, window_cycle=None)
         AiBarWindow._reload(window)
         window._stop_screen_recording.assert_called_once_with(wait=True)
+        window.ssh_tray.force_exit.assert_called_once_with()
+        window.ssh_tray.wait.assert_called_once_with(None)
         execvp.assert_called_once()
         window._stop_screen_recording.reset_mock()
         AiBarWindow._on_destroy(window, window)

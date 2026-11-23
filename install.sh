@@ -8,6 +8,7 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-"$HOME/.config"}/ai-bar"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 
 APT_PACKAGES=(
+    git
     python3
     python3-gi
     gir1.2-gtk-3.0
