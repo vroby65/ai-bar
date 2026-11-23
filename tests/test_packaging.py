@@ -22,6 +22,17 @@ class PackagingTests(unittest.TestCase):
 
         self.assertEqual(pyproject["project"]["scripts"]["ai-bar"], "ai_bar.app:main")
 
+    def test_sshserver_is_installed_from_a_pinned_github_revision(self):
+        with (ROOT / "pyproject.toml").open("rb") as handle:
+            pyproject = tomllib.load(handle)
+        dependency, = (item for item in pyproject["project"]["dependencies"]
+                       if item.startswith("sshserver @ "))
+        self.assertRegex(dependency,
+                         r"^sshserver @ git\+https://github\.com/vroby65/sshserver\.git@[0-9a-f]{40}$")
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        packages = installer.split("APT_PACKAGES=(", 1)[1].split(")", 1)[0].split()
+        self.assertIn("git", packages)
+
     def test_installer_uses_an_editable_install_for_testing(self):
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
 

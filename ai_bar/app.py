@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1255,15 +1256,19 @@ class AiBarWindow(Gtk.Window):
         self._install_css()
         self.add(self._build_content())
         self.show_all()
-        if isinstance(self.get_display(), GdkX11.X11Display):
-            icon_size = int(self.config.get("tray", {}).get("icon_size", 24))
-            self.ssh_tray = Gio.Subprocess.new(
-                [sys.executable, "-m", "ai_bar.ssh_server", str(icon_size)],
-                Gio.SubprocessFlags.STDIN_PIPE,
-            )
-            panel_lifetime = self.ssh_tray.get_stdin_pipe()
-            self.connect("destroy", lambda _window: panel_lifetime.close(None))
+        self._start_ssh_tray()
         self._update_status_items()
+
+    def _start_ssh_tray(self) -> None:
+        if not isinstance(self.get_display(), GdkX11.X11Display) or find_spec("sshserver") is None:
+            return
+        icon_size = int(self.config.get("tray", {}).get("icon_size", 24))
+        self.ssh_tray = Gio.Subprocess.new(
+            [sys.executable, "-m", "sshserver", "--icon-size", str(icon_size), "--watch-stdin"],
+            Gio.SubprocessFlags.STDIN_PIPE,
+        )
+        panel_lifetime = self.ssh_tray.get_stdin_pipe()
+        self.connect("destroy", lambda _window: panel_lifetime.close(None))
 
     def _configure_webkit_persistence(self) -> None:
         if WebKit2 is None:

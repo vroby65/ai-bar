@@ -37,6 +37,8 @@ This is the user's standing preference for `ai-bar`.
   only the active configuration file.
 - `ai_bar/xapp_tray.py`: XApp indicator integration.
 - `ai_bar/xembed_tray.py`: XEmbed tray icon host for X11.
+- `pyproject.toml`: pins the external `sshserver` dependency. AI-bar passes the
+  configured tray icon size and supervises the applet through its stdin pipe.
 - `ai_bar/__main__.py`: forwards execution to `ai_bar.app:main`.
 - `config.example.json`: user-facing example whose loaded result must match
   `DEFAULT_CONFIG`, as enforced by `tests/test_config.py`.

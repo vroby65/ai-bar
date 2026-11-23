@@ -27,6 +27,8 @@ Run the script as a regular user, without `sudo`: it requests elevated privilege
 - enables GNOME Keyring so LightDM can unlock it with the login password
 - installs the `ai-bar` command with `pipx` in editable mode and links `ai-bar`,
   `ai-bar-openbox-session`, and `ai-bar-askpass` into `/usr/local/bin`
+- installs the [sshserver](https://github.com/vroby65/sshserver) applet in the
+  same Python environment
 - creates `~/.config/ai-bar/config.json` if it does not exist, using the
   configuration bundled with the installer
 - installs the `Aura Midnight` Openbox theme into `~/.themes` and creates `~/.config/openbox/rc.xml` pointing to it if it does not already exist
@@ -70,7 +72,10 @@ To run it directly from the checkout during development:
 python3 -m ai_bar --config config.example.json
 ```
 
-The editable installation loads Python code directly from this checkout. After a code change, use the `Reload` button to test it without running the installer again.
+The editable installation loads Python code directly from this checkout. Use
+the `Reload` button after a code change. If you are updating an installation
+from before the external SSH applet, rerun `./install.sh` before reloading to
+install the new dependency.
 
 On X11, Shift+Tab activates the next window on the current desktop, including
 minimized windows and AI-bar itself. Returning to AI-bar restores keyboard focus
@@ -153,7 +158,7 @@ The grid button beside the date and IP tiles the normal, non-minimized windows o
 the monitor of the focused window in a spiral layout. It starts top-to-bottom in
 a tall work area and uses the panel monitor when no external window is focused.
 
-On X11, AI-bar launches the SSH server tray applet. Its icon is green when the
+On X11, AI-bar launches `sshserver` in the XEmbed tray. Its icon is green when the
 service or its activation socket is active and gray when both are off, OpenSSH is
 missing, or its status is unavailable. Click the icon to open the menu
 and choose `Attiva` or `Disattiva`. The system password dialog authorizes the
