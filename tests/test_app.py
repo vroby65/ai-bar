@@ -571,24 +571,25 @@ class ClockLayoutTests(unittest.TestCase):
         window._tile_windows_spiral.assert_called_once_with(tile)
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
-    def test_ip_opens_librespeed_on_left_click_and_router_app_on_right_click(self, _timeout):
+    def test_ip_menu_items_open_the_three_network_tools(self, _timeout):
         window = AiBarWindow.__new__(AiBarWindow)
         window.config = default_config()
         window._launch = Mock()
         clock = window._build_clock()
         self.addCleanup(clock.destroy)
-        for number in (2, 3, 1):
-            event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
-            event.button = number
-            self.assertEqual(window.public_ip_link.emit("button-press-event", event), number in (1, 3))
+        items = window.public_ip_menu.get_children()
+        self.assertEqual([item.get_label() for item in items], ["LibreSpeed", "FRITZ!Box", "FritzMonitor"])
+        for item in items:
+            item.activate()
         self.assertEqual(window._launch.call_args_list, [
-            call(["google-chrome", "--app=http://192.168.178.1/"]),
             call(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"]),
+            call(["google-chrome", "--app=http://192.168.178.1/"]),
+            call(["google-chrome", "--app=http://127.0.0.1:8090/"]),
         ])
 
     @unittest.skipIf(X is None, "python-xlib not available")
     @patch("ai_bar.app.GLib.timeout_add_seconds")
-    def test_pointer_clicks_reach_ip_link_during_both_phases(self, _timeout):
+    def test_both_pointer_buttons_open_the_ip_menu_during_both_phases(self, _timeout):
         from Xlib.ext import xtest
 
         display = xlib_display.Display()
@@ -610,18 +611,17 @@ class ClockLayoutTests(unittest.TestCase):
                 host.get_display().sync()
                 x, y = window.public_ip_link.translate_coordinates(host, 4, 4)
                 xtest.fake_input(display, X.MotionNotify, x=root_x + x, y=root_y + y)
-                for button in (1, 3):
+                for button in (2, 1, 3):
                     xtest.fake_input(display, X.ButtonPress, button)
                     xtest.fake_input(display, X.ButtonRelease, button)
-                display.sync()
-                loop = GLib.MainLoop()
-                GLib.timeout_add(50, lambda: (loop.quit(), False)[1])
-                loop.run()
-                self.assertEqual(window._launch.call_args_list, [
-                    call(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"]),
-                    call(["google-chrome", "--app=http://192.168.178.1/"]),
-                ])
-                window._launch.reset_mock()
+                    display.sync()
+                    loop = GLib.MainLoop()
+                    GLib.timeout_add(50, lambda: (loop.quit(), False)[1])
+                    loop.run()
+                    self.assertEqual(window.public_ip_menu.get_mapped(), button in (1, 3), f"button {button}")
+                    if button in (1, 3):
+                        window.public_ip_menu.popdown()
+                    window._launch.assert_not_called()
 
     @patch("ai_bar.app.GLib.timeout_add_seconds")
     def test_panel_reload_is_beside_time_and_keeps_its_action(self, _timeout):

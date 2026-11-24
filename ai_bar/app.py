@@ -1385,8 +1385,18 @@ class AiBarWindow(Gtk.Window):
         # The stack has its own GDK window, so the event box needs one too.
         self.public_ip_link = Gtk.EventBox()
         self.public_ip_link.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-        self.public_ip_link.set_tooltip_text("Sinistro: LibreSpeed · Destro: modem")
+        self.public_ip_link.set_tooltip_text("Apri il menu di rete")
         self.public_ip_link.add(self.ip_stack)
+        self.public_ip_menu = Gtk.Menu()
+        for label, command in (
+            ("LibreSpeed", ["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"]),
+            ("FRITZ!Box", ["google-chrome", "--app=http://192.168.178.1/"]),
+            ("FritzMonitor", ["google-chrome", "--app=http://127.0.0.1:8090/"]),
+        ):
+            item = Gtk.MenuItem(label=label)
+            item.connect("activate", lambda _item, args: self._launch(args), command)
+            self.public_ip_menu.append(item)
+        self.public_ip_menu.attach_to_widget(self.public_ip_link, None)
         self.public_ip_link.connect("button-press-event", self._on_public_ip_button_press)
         self.clock_details.pack_start(self.public_ip_link, False, False, 0)
         for button_config in self.config.get("session_buttons", []):
@@ -1426,13 +1436,11 @@ class AiBarWindow(Gtk.Window):
             self.ip_stack.set_visible_child(self.public_ip_label)
         return True
 
-    def _on_public_ip_button_press(self, _widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
-        if event.button == 1:
-            self._launch(["gtk-launch", "chrome-nbiekbfobbodclgbbjnmabmomekfpaap-Default.desktop"])
-        elif event.button == 3:
-            self._launch(["google-chrome", "--app=http://192.168.178.1/"])
-        else:
+    def _on_public_ip_button_press(self, widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
+        if event.button not in (1, 3):
             return False
+        self.public_ip_menu.show_all()
+        self.public_ip_menu.popup_at_widget(widget, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, event)
         return True
 
     def _refresh_public_ip(self) -> bool:
