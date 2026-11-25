@@ -846,13 +846,13 @@ class ClockLayoutTests(unittest.TestCase):
         finally:
             control.destroy()
 
-    def test_microphone_next_to_mute_opens_dictation(self):
+    def test_microphone_left_of_mute_opens_dictation(self):
         window = AiBarWindow.__new__(AiBarWindow)
         window.volume_controls = []
         with patch("ai_bar.app.GLib.find_program_in_path", return_value="/opt/bin/wdict-live") as find:
             control = window._build_volume_control({})
         try:
-            mute, microphone, slider, _label = control.get_children()
+            microphone, mute, slider, _label = control.get_children()
             self.assertTrue(mute.get_style_context().has_class("volume-mute-button"))
             self.assertEqual(microphone.get_image().get_icon_name()[0], "audio-input-microphone-symbolic")
             self.assertIsInstance(slider, Gtk.Scale)
