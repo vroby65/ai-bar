@@ -846,6 +846,33 @@ class ClockLayoutTests(unittest.TestCase):
         finally:
             control.destroy()
 
+    def test_microphone_next_to_mute_opens_dictation(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.volume_controls = []
+        with patch("ai_bar.app.GLib.find_program_in_path", return_value="/opt/bin/wdict-live") as find:
+            control = window._build_volume_control({})
+        try:
+            mute, microphone, slider, _label = control.get_children()
+            self.assertTrue(mute.get_style_context().has_class("volume-mute-button"))
+            self.assertEqual(microphone.get_image().get_icon_name()[0], "audio-input-microphone-symbolic")
+            self.assertIsInstance(slider, Gtk.Scale)
+            find.assert_called_once_with("wdict-live")
+            with patch.object(window, "_launch") as launch:
+                microphone.emit("clicked")
+            launch.assert_called_once_with(["/opt/bin/wdict-live"])
+        finally:
+            control.destroy()
+
+    def test_volume_has_no_dictation_button_without_the_launcher(self):
+        window = AiBarWindow.__new__(AiBarWindow)
+        window.volume_controls = []
+        with patch("ai_bar.app.GLib.find_program_in_path", return_value=None):
+            control = window._build_volume_control({})
+        try:
+            self.assertIsInstance(control.get_children()[1], Gtk.Scale)
+        finally:
+            control.destroy()
+
     def test_volume_leaves_room_for_reload_and_three_status_buttons(self):
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS.encode())
@@ -853,9 +880,10 @@ class ClockLayoutTests(unittest.TestCase):
         window = AiBarWindow.__new__(AiBarWindow)
         window.volume_controls = []
         window.status_labels = []
-        widgets = [window._build_session_button(
-            {"label": "Reload", "icon": "view-refresh-symbolic", "action": "reload"}, icon_only=True
-        ), window._build_volume_control({"command": ["pavucontrol"]})]
+        with patch("ai_bar.app.GLib.find_program_in_path", return_value="/opt/bin/wdict-live"):
+            widgets = [window._build_session_button(
+                {"label": "Reload", "icon": "view-refresh-symbolic", "action": "reload"}, icon_only=True
+            ), window._build_volume_control({"command": ["pavucontrol"]})]
         for icon in ("preferences-desktop-display-symbolic", "system-software-install-symbolic", "preferences-system-symbolic"):
             widgets.append(window._build_status_button({"icon": icon, "icon_only": True}))
         row = NaturalWrapBox(spacing=6)

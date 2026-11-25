@@ -7,6 +7,8 @@ the indicator is hidden when no battery is detected.
 
 The volume control expands or shrinks to fill the space left by the other status
 widgets, keeping them on one row whenever their minimum widths fit the panel.
+When `wdict-live` is available on `PATH`, the microphone button beside mute opens
+the dictation panel.
 
 The default theme uses a flat graphite surface with solid accent colors for the
 main controls. Launcher and window buttons cycle through the accent palette,

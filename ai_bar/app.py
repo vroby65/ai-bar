@@ -1066,6 +1066,7 @@ button.status-button {
 }
 
 button.volume-mute-button,
+button.volume-dictation-button,
 button.volume-settings-button {
   border-radius: 4px;
   padding: 2px;
@@ -1633,6 +1634,16 @@ class AiBarWindow(Gtk.Window):
         icon = Gtk.Image.new_from_icon_name("audio-volume-muted-symbolic", Gtk.IconSize.BUTTON)
         mute_button.add(icon)
         control.pack_start(mute_button, False, False, 0)
+
+        dictation = GLib.find_program_in_path("wdict-live")
+        if dictation:
+            microphone = Gtk.Button.new_from_icon_name("audio-input-microphone-symbolic", Gtk.IconSize.BUTTON)
+            microphone.get_style_context().add_class("volume-dictation-button")
+            add_accent_color(microphone, 3)
+            microphone.set_relief(Gtk.ReliefStyle.NONE)
+            microphone.set_tooltip_text("Apri la dettatura vocale")
+            microphone.connect("clicked", lambda _button: self._launch([dictation]))
+            control.pack_start(microphone, False, False, 0)
 
         scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
         scale.get_style_context().add_class("volume-slider")
